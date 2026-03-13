@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Callable
 
@@ -28,40 +29,37 @@ logger = logging.getLogger(__name__)
 
 class AwsInsightsService:
     def __init__(self) -> None:
-        self.accounts = self._hydrate_accounts(settings.get_aws_accounts())
-
-    def _hydrate_accounts(
-        self,
-        accounts: dict[str, AwsAccountConfig],
-    ) -> dict[str, AwsAccountConfig]:
-        hydrated_accounts: dict[str, AwsAccountConfig] = {}
-        for key, account in accounts.items():
-            hydrated_accounts[key] = self._ensure_account_id(account)
-        return hydrated_accounts
+        self.accounts = settings.get_aws_accounts()
 
     def _ensure_account_id(self, account: AwsAccountConfig) -> AwsAccountConfig:
         if account.account_id:
             return account
 
-        sts_client = AwsClientFactory(account).sts()
-        identity = sts_client.get_caller_identity()
-        return AwsAccountConfig(
-            key=account.key,
-            account_id=identity["Account"],
-            access_key_id=account.access_key_id,
-            secret_access_key=account.secret_access_key,
-            session_token=account.session_token,
-            region=account.region,
-        )
+        try:
+            sts_client = AwsClientFactory(account).sts()
+            identity = sts_client.get_caller_identity()
+        except (ClientError, BotoCoreError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Unable to resolve AWS account id for account key '{account.key}'. "
+                    "Check AWS credentials and STS access."
+                ),
+            ) from exc
+
+        resolved_account = replace(account, account_id=identity["Account"])
+        self.accounts[account.key] = resolved_account
+        return resolved_account
 
     def list_accounts(self) -> list[AccountListItem]:
         return [
             AccountListItem(
-                account_key=account.key,
-                account_id=account.account_id,
-                region=account.region,
+                account_key=resolved_account.key,
+                account_id=resolved_account.account_id,
+                region=resolved_account.region,
             )
             for account in self.accounts.values()
+            for resolved_account in [self._ensure_account_id(account)]
         ]
 
     def _resolve_accounts(self, account_keys: list[str] | None) -> list[AwsAccountConfig]:
@@ -81,7 +79,7 @@ class AwsInsightsService:
                 detail=f"Unknown account keys: {', '.join(missing)}",
             )
 
-        return [self.accounts[key] for key in account_keys]
+        return [self._ensure_account_id(self.accounts[key]) for key in account_keys]
 
     async def _run_for_accounts(
         self,
