@@ -31,19 +31,32 @@ Format:
   "recorded_at_utc": "2026-03-13T10:20:30.000000+00:00",
   "endpoint": "/api/v1/aws/cost-breakdown",
   "request_payload": {
-    "account_keys": ["dev"],
+    "account_keys": ["dev", "prod"],
     "days": 30,
     "top_n": 5
   },
-  "response_payload": {
-    "requested_accounts": ["dev"],
-    "succeeded_accounts": [],
-    "failed_accounts": []
-  }
+  "requested_accounts": ["dev", "prod"],
+  "account_results": [
+    {
+      "account_key": "dev",
+      "account_id": "123456789012",
+      "status": "success",
+      "data": {
+        "total_cost": 100.25,
+        "breakdown": []
+      }
+    },
+    {
+      "account_key": "prod",
+      "account_id": "210987654321",
+      "status": "failed",
+      "error": "Access denied"
+    }
+  ]
 }
 ```
 
-This file is append-only. Each new API response is written as one new JSON line so future agentic RAG pipelines can process it incrementally.
+This file is append-only. Each API call writes one JSON object per line, which is the preferred source-of-truth format for future agentic RAG ingestion.
 
 ## .env format
 
