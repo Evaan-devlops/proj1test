@@ -4,6 +4,7 @@ import asyncio
 import logging
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from functools import lru_cache
 from typing import Any, Callable
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -30,13 +31,21 @@ logger = logging.getLogger(__name__)
 class AwsInsightsService:
     def __init__(self) -> None:
         self.accounts = settings.get_aws_accounts()
+        self._client_factories: dict[str, AwsClientFactory] = {}
+
+    def _client_factory(self, account: AwsAccountConfig) -> AwsClientFactory:
+        factory = self._client_factories.get(account.key)
+        if factory is None:
+            factory = AwsClientFactory(account)
+            self._client_factories[account.key] = factory
+        return factory
 
     def _ensure_account_id(self, account: AwsAccountConfig) -> AwsAccountConfig:
         if account.account_id:
             return account
 
         try:
-            sts_client = AwsClientFactory(account).sts()
+            sts_client = self._client_factory(account).sts()
             identity = sts_client.get_caller_identity()
         except (ClientError, BotoCoreError) as exc:
             raise HTTPException(
@@ -49,6 +58,7 @@ class AwsInsightsService:
 
         resolved_account = replace(account, account_id=identity["Account"])
         self.accounts[account.key] = resolved_account
+        self._client_factories[account.key] = AwsClientFactory(resolved_account)
         return resolved_account
 
     def list_accounts(self) -> list[AccountListItem]:
@@ -174,25 +184,8 @@ class AwsInsightsService:
         days: int,
         top_n: int,
     ) -> dict[str, Any]:
-        client = AwsClientFactory(account).ce()
-        start, end = self._date_range(days)
-
-        response = client.get_cost_and_usage(
-            TimePeriod={"Start": start, "End": end},
-            Granularity="MONTHLY",
-            Metrics=["UnblendedCost"],
-            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-        )
-
-        service_totals: dict[str, float] = {}
-        total_cost = 0.0
-
-        for result in response["ResultsByTime"]:
-            for item in result["Groups"]:
-                service_name = item["Keys"][0]
-                cost = float(item["Metrics"]["UnblendedCost"]["Amount"])
-                total_cost += cost
-                service_totals[service_name] = service_totals.get(service_name, 0.0) + cost
+        service_totals = self._service_costs_worker(account, days)
+        total_cost = sum(service_totals.values())
 
         sorted_items = sorted(
             service_totals.items(),
@@ -226,30 +219,11 @@ class AwsInsightsService:
         }
 
     def _service_costs_worker(self, account: AwsAccountConfig, days: int) -> dict[str, float]:
-        client = AwsClientFactory(account).ce()
-        start, end = self._date_range(days)
-
-        response = client.get_cost_and_usage(
-            TimePeriod={"Start": start, "End": end},
-            Granularity="MONTHLY",
-            Metrics=["UnblendedCost"],
-            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-        )
-
-        service_costs: dict[str, float] = {}
-        for result in response["ResultsByTime"]:
-            for group in result["Groups"]:
-                service_name = group["Keys"][0]
-                amount = float(group["Metrics"]["UnblendedCost"]["Amount"])
-                service_costs[service_name] = round(
-                    service_costs.get(service_name, 0.0) + amount,
-                    2,
-                )
-
-        return service_costs
+        response = self._get_cost_by_service_response(account, days)
+        return self._aggregate_service_costs(response)
 
     def _trends_forecast_worker(self, account: AwsAccountConfig, days: int) -> dict[str, Any]:
-        client = AwsClientFactory(account).ce()
+        client = self._client_factory(account).ce()
         start, end = self._date_range(days)
 
         cost_response = client.get_cost_and_usage(
@@ -289,7 +263,7 @@ class AwsInsightsService:
         return {"actual": actual, "forecast": forecast, "anomalies": anomalies}
 
     def _budget_worker(self, account: AwsAccountConfig, budget_name: str) -> dict[str, Any]:
-        client = AwsClientFactory(account).budgets()
+        client = self._client_factory(account).budgets()
         budget = client.describe_budget(
             AccountId=account.account_id,
             BudgetName=budget_name,
@@ -312,7 +286,7 @@ class AwsInsightsService:
         days: int,
         resource_id: str,
     ) -> dict[str, Any]:
-        client = AwsClientFactory(account).ce()
+        client = self._client_factory(account).ce()
         start, end = self._date_range(days)
 
         response = client.get_cost_and_usage(
@@ -334,7 +308,7 @@ class AwsInsightsService:
         return {"resource_id": resource_id, "total_cost": round(total_cost, 2)}
 
     def _ec2_idle_worker(self, account: AwsAccountConfig, payload: Ec2IdleRequest) -> dict[str, Any]:
-        cloudwatch = AwsClientFactory(account).cloudwatch()
+        cloudwatch = self._client_factory(account).cloudwatch()
         return {
             "instances": [
                 self._instance_idle_status(
@@ -358,28 +332,16 @@ class AwsInsightsService:
     ) -> dict[str, Any]:
         end_time = datetime.now(UTC)
         start_time = end_time - timedelta(days=days)
-        cpu_idle = self._average_metric_below_threshold(
+        metrics = self._get_instance_metric_averages(
             cloudwatch=cloudwatch,
-            metric_name="CPUUtilization",
-            instance_id=instance_id,
-            start_time=start_time,
-            end_time=end_time,
-            threshold=cpu_threshold,
-        )
-        average_network_in = self._average_metric_value(
-            cloudwatch=cloudwatch,
-            metric_name="NetworkIn",
             instance_id=instance_id,
             start_time=start_time,
             end_time=end_time,
         )
-        average_network_out = self._average_metric_value(
-            cloudwatch=cloudwatch,
-            metric_name="NetworkOut",
-            instance_id=instance_id,
-            start_time=start_time,
-            end_time=end_time,
-        )
+        cpu_points = metrics["CPUUtilization"]
+        average_network_in = metrics["NetworkIn"]
+        average_network_out = metrics["NetworkOut"]
+        cpu_idle = bool(cpu_points) and all(value < cpu_threshold for value in cpu_points)
         network_idle = (average_network_in + average_network_out) < network_threshold_bytes
 
         return IdleStatusItem(
@@ -389,63 +351,87 @@ class AwsInsightsService:
             idle=cpu_idle and network_idle,
         ).model_dump()
 
-    def _average_metric_below_threshold(
+    def _get_cost_by_service_response(
         self,
-        cloudwatch: Any,
-        metric_name: str,
-        instance_id: str,
-        start_time: datetime,
-        end_time: datetime,
-        threshold: float,
-    ) -> bool:
-        datapoints = self._get_metric_datapoints(
-            cloudwatch,
-            metric_name,
-            instance_id,
-            start_time,
-            end_time,
+        account: AwsAccountConfig,
+        days: int,
+    ) -> dict[str, Any]:
+        client = self._client_factory(account).ce()
+        start, end = self._date_range(days)
+        return client.get_cost_and_usage(
+            TimePeriod={"Start": start, "End": end},
+            Granularity="MONTHLY",
+            Metrics=["UnblendedCost"],
+            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
         )
-        if not datapoints:
-            return False
-        return all(float(item["Average"]) < threshold for item in datapoints)
 
-    def _average_metric_value(
+    def _aggregate_service_costs(self, response: dict[str, Any]) -> dict[str, float]:
+        service_costs: dict[str, float] = {}
+        for result in response["ResultsByTime"]:
+            for group in result["Groups"]:
+                service_name = group["Keys"][0]
+                amount = float(group["Metrics"]["UnblendedCost"]["Amount"])
+                service_costs[service_name] = service_costs.get(service_name, 0.0) + amount
+
+        return {
+            service_name: round(amount, 2)
+            for service_name, amount in service_costs.items()
+        }
+
+    def _get_instance_metric_averages(
         self,
         cloudwatch: Any,
-        metric_name: str,
         instance_id: str,
         start_time: datetime,
         end_time: datetime,
-    ) -> float:
-        datapoints = self._get_metric_datapoints(
-            cloudwatch,
-            metric_name,
-            instance_id,
-            start_time,
-            end_time,
-        )
-        if not datapoints:
-            return 0.0
-        return sum(float(item["Average"]) for item in datapoints) / len(datapoints)
-
-    def _get_metric_datapoints(
-        self,
-        cloudwatch: Any,
-        metric_name: str,
-        instance_id: str,
-        start_time: datetime,
-        end_time: datetime,
-    ) -> list[dict[str, Any]]:
-        response = cloudwatch.get_metric_statistics(
-            Namespace="AWS/EC2",
-            MetricName=metric_name,
-            Dimensions=[{"Name": "InstanceId", "Value": instance_id}],
+    ) -> dict[str, Any]:
+        query_definitions = [
+            ("cpu", "CPUUtilization"),
+            ("network_in", "NetworkIn"),
+            ("network_out", "NetworkOut"),
+        ]
+        response = cloudwatch.get_metric_data(
+            MetricDataQueries=[
+                {
+                    "Id": query_id,
+                    "MetricStat": {
+                        "Metric": {
+                            "Namespace": "AWS/EC2",
+                            "MetricName": metric_name,
+                            "Dimensions": [{"Name": "InstanceId", "Value": instance_id}],
+                        },
+                        "Period": 86400,
+                        "Stat": "Average",
+                    },
+                    "ReturnData": True,
+                }
+                for query_id, metric_name in query_definitions
+            ],
             StartTime=start_time,
             EndTime=end_time,
-            Period=86400,
-            Statistics=["Average"],
+            ScanBy="TimestampAscending",
         )
-        return response.get("Datapoints", [])
+
+        results_by_id = {
+            item["Id"]: [float(value) for value in item.get("Values", [])]
+            for item in response.get("MetricDataResults", [])
+        }
+        network_in_values = results_by_id.get("network_in", [])
+        network_out_values = results_by_id.get("network_out", [])
+
+        return {
+            "CPUUtilization": results_by_id.get("cpu", []),
+            "NetworkIn": (
+                sum(network_in_values) / len(network_in_values)
+                if network_in_values
+                else 0.0
+            ),
+            "NetworkOut": (
+                sum(network_out_values) / len(network_out_values)
+                if network_out_values
+                else 0.0
+            ),
+        }
 
     @staticmethod
     def _date_range(days: int) -> tuple[str, str]:
@@ -460,6 +446,7 @@ class AwsInsightsService:
         return future.replace(day=1).isoformat()
 
 
+@lru_cache(maxsize=1)
 def get_aws_insights_service() -> AwsInsightsService:
     return AwsInsightsService()
 
