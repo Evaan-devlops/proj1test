@@ -24,3 +24,5 @@ class AwsClientFactory:
     def cloudwatch(self):
         return self._session.client("cloudwatch", region_name=self.account.region)
 
+    def sts(self):
+        return self._session.client("sts", region_name=self.account.region)

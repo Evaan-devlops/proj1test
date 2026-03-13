@@ -12,7 +12,7 @@ load_dotenv()
 @dataclass(frozen=True)
 class AwsAccountConfig:
     key: str
-    account_id: str
+    account_id: str | None
     access_key_id: str
     secret_access_key: str
     session_token: str | None
@@ -43,7 +43,7 @@ class Settings:
             session_token = os.getenv(f"{prefix}SESSION_TOKEN")
             region = os.getenv(f"{prefix}REGION", "us-east-1")
 
-            if not access_key_id or not secret_access_key or not account_id:
+            if not access_key_id or not secret_access_key:
                 continue
 
             accounts[key] = AwsAccountConfig(
@@ -59,4 +59,3 @@ class Settings:
 
 
 settings = Settings()
-

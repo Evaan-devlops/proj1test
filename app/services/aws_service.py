@@ -28,7 +28,31 @@ logger = logging.getLogger(__name__)
 
 class AwsInsightsService:
     def __init__(self) -> None:
-        self.accounts = settings.get_aws_accounts()
+        self.accounts = self._hydrate_accounts(settings.get_aws_accounts())
+
+    def _hydrate_accounts(
+        self,
+        accounts: dict[str, AwsAccountConfig],
+    ) -> dict[str, AwsAccountConfig]:
+        hydrated_accounts: dict[str, AwsAccountConfig] = {}
+        for key, account in accounts.items():
+            hydrated_accounts[key] = self._ensure_account_id(account)
+        return hydrated_accounts
+
+    def _ensure_account_id(self, account: AwsAccountConfig) -> AwsAccountConfig:
+        if account.account_id:
+            return account
+
+        sts_client = AwsClientFactory(account).sts()
+        identity = sts_client.get_caller_identity()
+        return AwsAccountConfig(
+            key=account.key,
+            account_id=identity["Account"],
+            access_key_id=account.access_key_id,
+            secret_access_key=account.secret_access_key,
+            session_token=account.session_token,
+            region=account.region,
+        )
 
     def list_accounts(self) -> list[AccountListItem]:
         return [

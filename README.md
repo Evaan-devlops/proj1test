@@ -65,7 +65,6 @@ Use one alias per AWS account.
 ```env
 AWS_ACCOUNT_KEYS=dev,prod
 
-AWS_ACCOUNT__DEV__ACCOUNT_ID=123456789012
 AWS_ACCOUNT__DEV__ACCESS_KEY_ID=...
 AWS_ACCOUNT__DEV__SECRET_ACCESS_KEY=...
 AWS_ACCOUNT__DEV__SESSION_TOKEN=...
@@ -73,6 +72,8 @@ AWS_ACCOUNT__DEV__REGION=us-east-1
 ```
 
 If you only have one account, keep just one alias in `AWS_ACCOUNT_KEYS`.
+
+`AWS_ACCOUNT__<KEY>__ACCOUNT_ID` is optional. If omitted, the API resolves it automatically using AWS STS `GetCallerIdentity`.
 
 ## Request examples
 
