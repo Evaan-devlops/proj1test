@@ -464,3 +464,7 @@ class AwsInsightsService:
 
 def get_aws_insights_service() -> AwsInsightsService:
     return AwsInsightsService()
+
+
+# Backward-compatible alias for older imports that used the singular name.
+AwsInsightService = AwsInsightsService
