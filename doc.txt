@@ -1,0 +1,180 @@
+split issue 1, 2, 3...
+
+
+analyze each issue independently
+
+
+deduplicate against already-created tickets
+
+
+create ticket only for new unique issues
+
+ System Instructions
+Very important.
+This tells the model:
+what role it plays
+
+
+output format
+
+
+how to assign confidence
+
+
+when to say human intervention required
+
+
+not to invent causes unsupported by evidence
+3. Small Structured State
+Not full “memory,” but a little metadata can help outside the prompt or sometimes inside it.
+Example:
+issue_id
+
+
+source file name
+
+
+previously detected duplicate ticket id
+
+
+processing stage
+
+
+threshold = 85
+
+
+1. Issue Segmentation (Backend responsibility)
+👉 Identify:
+where issue starts
+
+
+where issue ends
+
+
+2. Issue Analysis (LLM responsibility)
+👉 Given ONE issue:
+root cause
+
+
+solution
+
+
+confidence
+ Now your core question:
+"Who identifies issue boundaries?"
+Answer:
+ 👉 Backend (rule-based or light LLM pre-step if needed)
+Rule-based splitting
+If your logs have structure like:
+Incident ID:
+Date:
+Description:
+---
+Incident ID:
+...
+It is a 2-stage hybrid:
+backend does lightweight preprocessing
+
+
+LLM does semantic segmentation when needed
+
+
+backend then processes each extracted issue separately
+Raw document/text
+→ preprocessing
+→ LLM segmentation step
+→ returns issue_1, issue_2, issue_3...
+→ for each issue:
+     → LLM analysis step
+     → embedding dedup
+     → ticket create if unique
+Call 1: Segmentation call
+Purpose:
+identify how many separate issues exist
+
+
+split text into issue blocks
+
+
+You are an incident parsing assistant.
+
+Analyze the given text block.
+
+Determine:
+1. Does this block contain:
+   - a new issue
+   - continuation of a previous issue
+   - multiple issues
+
+2. Extract issue(s) if present.
+
+3. If continuation, say "continuation": true
+
+Return JSON:
+{
+  "type": "new | continuation | multiple",
+  "issues": [
+    {
+      "issue_text": "...",
+      "title": "..."
+    }
+  ]
+}
+
+if next chunk is same task related embedding will take care of it”
+
+
+
+Call 2: Per-issue analysis call
+Purpose:
+root cause
+
+
+solution
+
+
+confidence
+
+
+human intervention flag
+LLM for semantic issue splitting
+
+
+LLM again for per-issue analysis
+
+
+Embeddings for deduplication
+backend to control sequence and ticket creation
+Input Document
+→ split into blocks (backend)
+→ for each block:
+→ LLM decides:
+new / continuation / multiple
+→ backend builds full issue text
+→ for each complete issue:
+→ LLM analysis (root cause, solution, confidence)
+→ embedding similarity check
+→ if new → create ticket
+→ else → link existing
+
+You are an incident triage assistant.
+
+Analyze exactly one support issue at a time.
+
+You must return:
+1. concise issue summary
+2. probable root cause
+3. suggested solution
+4. confidence score from 0 to 100
+5. whether human intervention is required
+
+Rules:
+- Use only the issue text provided.
+- Do not use outside knowledge.
+- Do not invent technical causes unsupported by the text.
+- If the evidence is incomplete, ambiguous, or contradictory, say so and lower confidence.
+- If confidence is below 85, set human_intervention_required to true.
+- Prefer precise, practical wording.
+- If an existing ticket ID is mentioned, include it in the response.
+- Return strict JSON only.
+
