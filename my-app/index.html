@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- =========================
+      Basics (safe defaults)
+    ========================== -->
+     <!-- Correct encoding -->
+    <meta charset="UTF-8" />
+
+    <!-- Responsive layout on mobile -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Helps browsers render built-in UI correctly for light/dark -->
+    <meta name="color-scheme" content="light dark" />
+
+    <!-- =========================
+      Title + SEO baseline
+      - Title shows in browser tab and is used as a default in previews.
+      - Description is used by search engines for the snippet.
+      (No runtime dependency → never causes errors)
+    ========================== -->
+    <title>My App</title>
+    <meta
+      name="description"
+      content="Fast chat app with streaming responses, search, and suggestions."
+    />
+
+    <!-- =========================
+      OPTIONAL social sharing
+      - Safe to keep even if /og.png doesn't exist.
+      - Worst case: platforms show no image (no runtime errors).
+      - When ready, place an image at: /public/og.png
+    ========================== -->
+    <!-- Social sharing: preview description in link cards -->
+    <meta property="og:title" content="My App" />
+    <meta
+      property="og:description"
+      content="Fast chat app with streaming responses, search, and suggestions."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- =========================
+      Icons
+      - /public/* files are served at site root.
+      - If these files don't exist, you just won't see the icon
+        (no runtime errors).
+      - Recommended placeholders to add later:
+          /public/favicon.ico
+          /public/apple-touch-icon.png
+      - You can keep Vite's default icon too if you want:
+          /public/vite.svg
+    ========================== -->
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- =========================
+      Performance hint (optional)
+      - modulepreload can improve startup on slow networks.
+      - If it can’t preload, it just falls back (no errors).
+    ========================== -->
+    <link rel="modulepreload" href="/src/main.tsx" />
+
+    <!-- =========================
+      Tiny "instant skeleton"
+      - This is visible before React mounts.
+      - React will replace the #root content after hydration/mount.
+      - Keep this minimal: it should not depend on any JS.
+    ========================== -->
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      }
+      .shell {
+        padding: 16px;
+      }
+      .bar {
+        height: 14px;
+        border-radius: 10px;
+        margin: 10px 0;
+        background: #e5e7eb;
+      }
+      /* Optional: respect dark mode to avoid bright flash */
+      @media (prefers-color-scheme: dark) {
+        .bar {
+          background: #374151;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- =========================
+      React mount point
+      - Content inside #root will be replaced by React after mount.
+      - Skeleton here prevents "blank white screen" during initial load.
+    ========================== -->
+    <div id="root">
+      <div class="shell" aria-label="Loading">
+        <!-- Placeholder widths only; adjust later if you want -->
+        <div class="bar" style="width: 35%"></div>
+        <div class="bar" style="width: 90%"></div>
+        <div class="bar" style="width: 65%"></div>
+      </div>
+    </div>
+
+    <!-- =========================
+      Main entry
+      - Vite loads your app from here.
+      - Must remain in root index.html (not /public).
+    ========================== -->
+    <script type="module" src="/src/main.tsx"></script>
+
+    <!-- If JS is disabled, show a friendly message -->
+    <noscript>This app needs JavaScript enabled.</noscript>
+  </body>
+</html>
