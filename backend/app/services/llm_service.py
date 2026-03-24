@@ -28,6 +28,7 @@ class TokenPayload:
     expires_at: datetime | None
     token_type: str | None = None
     provider_status_code: int | None = None
+    cache_source: str = "fresh"
 
 
 class LlmService:
@@ -112,6 +113,9 @@ class LlmService:
             engine=settings.vessel_openai_engine,
             llm_answer=answer,
             prompt=prompt,
+            payload_mode=self._payload_mode(),
+            request_payload=provider_response["request_payload"],
+            token_cache_source=token_payload.cache_source,
             provider_request_id=provider_response["request_id"],
         )
 
@@ -142,19 +146,19 @@ class LlmService:
     async def _get_token_payload(self) -> TokenPayload:
         cached_token = self._token_payload
         if cached_token and self._is_token_valid(cached_token):
-            return cached_token
+            return self._with_cache_source(cached_token, "cache")
 
         async with self._token_lock:
             cached_token = self._token_payload
             if cached_token and self._is_token_valid(cached_token):
-                return cached_token
+                return self._with_cache_source(cached_token, "cache")
 
             response_body, status_code = await self._request_access_token()
             self._token_payload = self._build_token_payload(
                 response_body=response_body,
                 status_code=status_code,
             )
-            return self._token_payload
+            return self._with_cache_source(self._token_payload, "fresh")
 
     async def _request_access_token(self) -> tuple[dict[str, Any], int]:
         try:
@@ -238,6 +242,7 @@ class LlmService:
                 return {
                     "body": response.json(),
                     "status_code": response.status_code,
+                    "request_payload": payload,
                     "request_id": response.headers.get("x-request-id")
                     or response.headers.get("request-id")
                     or response.headers.get("x-correlation-id"),
@@ -266,6 +271,8 @@ class LlmService:
                         "(chatCompletion vs completions)."
                     ),
                     "provider_status_code": exc.response.status_code,
+                    "payload_mode": self._payload_mode(),
+                    "request_payload": payload,
                     "provider_response": self._safe_error_body(exc.response),
                 },
             ) from exc
@@ -320,6 +327,7 @@ class LlmService:
             expires_at=self._resolve_expiry(response_body.get("expires_in")),
             token_type=token_type.strip() if isinstance(token_type, str) else None,
             provider_status_code=status_code,
+            cache_source="fresh",
         )
 
     def _resolve_expiry(self, expires_in: Any) -> datetime | None:
@@ -371,7 +379,7 @@ class LlmService:
         return ""
 
     def _build_llm_payload(self, prompt: str) -> dict[str, Any]:
-        if self._uses_chat_completions():
+        if self._payload_mode() == "model_messages":
             return {
                 "model": settings.vessel_openai_engine,
                 "messages": [{"role": "user", "content": prompt}],
@@ -384,9 +392,28 @@ class LlmService:
             "max_tokens": settings.vessel_openai_max_tokens,
         }
 
-    def _uses_chat_completions(self) -> bool:
+    def _payload_mode(self) -> str:
+        mode = settings.vessel_openai_payload_mode
+        if mode in {"model_messages", "engine_prompt"}:
+            return mode
+
         llm_url = settings.vessel_openai_api.lower()
-        return "chatcompletion" in llm_url or "chat/completions" in llm_url
+        if "vox-genai-api" in llm_url or "chatcompletion" in llm_url:
+            return "model_messages"
+        return "engine_prompt"
+
+    def _with_cache_source(
+        self,
+        token_payload: TokenPayload,
+        cache_source: str,
+    ) -> TokenPayload:
+        return TokenPayload(
+            access_token=token_payload.access_token,
+            expires_at=token_payload.expires_at,
+            token_type=token_payload.token_type,
+            provider_status_code=token_payload.provider_status_code,
+            cache_source=cache_source,
+        )
 
     def _safe_error_body(self, response: httpx.Response) -> str:
         try:

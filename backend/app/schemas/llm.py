@@ -79,6 +79,20 @@ class LlmHealthCheckResponse(BaseModel):
         ...,
         description="The exact health-check prompt sent to the LLM gateway.",
     )
+    payload_mode: str = Field(
+        ...,
+        description="Payload shape used for the downstream LLM request.",
+        examples=["model_messages"],
+    )
+    request_payload: dict = Field(
+        ...,
+        description="Exact JSON payload sent to the downstream LLM gateway for debugging.",
+    )
+    token_cache_source: str = Field(
+        ...,
+        description="Whether the token used for this request came from cache or was freshly generated.",
+        examples=["cache", "fresh"],
+    )
     provider_request_id: str | None = Field(
         default=None,
         description="Optional downstream request identifier when returned by the LLM gateway.",

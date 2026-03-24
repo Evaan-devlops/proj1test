@@ -142,6 +142,7 @@ VOX_USER=your_vox_user
 VOX_PASSWORD=your_vox_password
 TOKEN_URL=https://devfederate.pfizer.com/as/token.oauth2?grant_type=client_credentials
 VESSEL_OPENAI_API=https://mule4api-comm-amer-dev.pfizer.com/vessel-openai-api-v1/chatCompletion
+VESSEL_OPENAI_PAYLOAD_MODE=model_messages
 VESSEL_OPENAI_ENGINE=gpt-4o-mini
 VESSEL_OPENAI_TEMPERATURE=0.1
 VESSEL_OPENAI_MAX_TOKENS=10000
@@ -162,9 +163,10 @@ Notes:
 - Default region is `us-east-1`.
 - `VESSEL_OPENAI_ENGINE` is read from `.env` so you can switch models later without code changes.
 - `TOKEN_URL` can keep `grant_type=client_credentials` in the query string. The backend sends only VOX basic auth plus that URL to obtain the token.
+- `VESSEL_OPENAI_PAYLOAD_MODE=model_messages` is the right setting for the Pfizer gateways shown so far, including `.../chatCompletion` and `.../vox-genai-api/completions`.
 - `TOKEN_CACHE_MINUTES=20` is the fallback token reuse window when the OAuth response does not include a usable `expires_in`.
 - The backend reuses the cached token until it is near expiry instead of regenerating it on every LLM request.
-- The LLM payload is selected from `VESSEL_OPENAI_API`: `chatCompletion` uses `{"model": "...", "messages": [...]}`, while `completions` uses `{"engine": "...", "prompt": "..."}`.
+- The LLM payload is controlled by `VESSEL_OPENAI_PAYLOAD_MODE`: `model_messages` sends `{"model": "...", "messages": [...]}`, while `engine_prompt` sends `{"engine": "...", "prompt": "..."}`.
 - `CHAT_RECENT_LIMIT=10` means only the 10 most recently updated chats keep full messages.
 - `CHAT_CONTEXT_MESSAGE_LIMIT=6` means only the most recent 6 messages from the active chat are added as prompt memory.
 - `CHAT_CONTEXT_PROMPT_CHAR_LIMIT=2500` caps chat memory size before it is sent to the LLM.
@@ -305,11 +307,22 @@ Response:
   "engine": "gpt-4o-mini",
   "llm_answer": "HEALTHCHECK_OK",
   "prompt": "Reply with HEALTHCHECK_OK only.",
+  "payload_mode": "model_messages",
+  "request_payload": {
+    "model": "gpt-4o-mini",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Reply with HEALTHCHECK_OK only."
+      }
+    ]
+  },
+  "token_cache_source": "cache",
   "provider_request_id": "optional-request-id"
 }
 ```
 
-This endpoint returns the full access token intentionally for debugging, so it should only be used in trusted environments.
+This endpoint returns the full access token intentionally for debugging, so it should only be used in trusted environments. It also shows whether the token came from `self._token_payload` cache and the exact downstream JSON payload used.
 
 Base path: `/api/v1`
 

@@ -43,6 +43,10 @@ class Settings:
         "VESSEL_OPENAI_API",
         "https://mule4api-comm-amer-dev.pfizer.com/vessel-openai-api-v1/chatCompletion",
     )
+    vessel_openai_payload_mode: str = os.getenv(
+        "VESSEL_OPENAI_PAYLOAD_MODE",
+        "model_messages",
+    ).strip().lower()
     vessel_openai_engine: str = os.getenv("VESSEL_OPENAI_ENGINE", "gpt-4o-mini")
     vessel_openai_temperature: float = float(os.getenv("VESSEL_OPENAI_TEMPERATURE", "0.1"))
     vessel_openai_max_tokens: int = int(os.getenv("VESSEL_OPENAI_MAX_TOKENS", "10000"))
