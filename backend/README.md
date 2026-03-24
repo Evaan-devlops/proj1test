@@ -164,7 +164,7 @@ Notes:
 - `TOKEN_URL` can keep `grant_type=client_credentials` in the query string. The backend sends only VOX basic auth plus that URL to obtain the token.
 - `TOKEN_CACHE_MINUTES=20` is the fallback token reuse window when the OAuth response does not include a usable `expires_in`.
 - The backend reuses the cached token until it is near expiry instead of regenerating it on every LLM request.
-- The LLM payload is selected from `VESSEL_OPENAI_API`: `chatCompletion` uses `messages`, while `completions` uses `prompt`.
+- The LLM payload is selected from `VESSEL_OPENAI_API`: `chatCompletion` uses `{"model": "...", "messages": [...]}`, while `completions` uses `{"engine": "...", "prompt": "..."}`.
 - `CHAT_RECENT_LIMIT=10` means only the 10 most recently updated chats keep full messages.
 - `CHAT_CONTEXT_MESSAGE_LIMIT=6` means only the most recent 6 messages from the active chat are added as prompt memory.
 - `CHAT_CONTEXT_PROMPT_CHAR_LIMIT=2500` caps chat memory size before it is sent to the LLM.

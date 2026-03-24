@@ -371,18 +371,18 @@ class LlmService:
         return ""
 
     def _build_llm_payload(self, prompt: str) -> dict[str, Any]:
-        payload = {
+        if self._uses_chat_completions():
+            return {
+                "model": settings.vessel_openai_engine,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+
+        return {
             "engine": settings.vessel_openai_engine,
+            "prompt": prompt,
             "temperature": settings.vessel_openai_temperature,
             "max_tokens": settings.vessel_openai_max_tokens,
         }
-
-        if self._uses_chat_completions():
-            payload["messages"] = [{"role": "user", "content": prompt}]
-            return payload
-
-        payload["prompt"] = prompt
-        return payload
 
     def _uses_chat_completions(self) -> bool:
         llm_url = settings.vessel_openai_api.lower()
