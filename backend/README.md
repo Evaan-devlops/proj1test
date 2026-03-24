@@ -145,6 +145,7 @@ VESSEL_OPENAI_API=https://mule4api-comm-amer-dev.pfizer.com/vessel-openai-api-v1
 VESSEL_OPENAI_ENGINE=gpt-4o-mini
 VESSEL_OPENAI_TEMPERATURE=0.1
 VESSEL_OPENAI_MAX_TOKENS=10000
+TOKEN_CACHE_MINUTES=20
 TOKEN_REQUEST_TIMEOUT_SECONDS=30
 LLM_REQUEST_TIMEOUT_SECONDS=60
 CHAT_CONTEXT_FILE=data/chat_context.jsonl
@@ -160,6 +161,10 @@ Notes:
 - If `account_keys` is omitted in a request body, the API queries all configured accounts.
 - Default region is `us-east-1`.
 - `VESSEL_OPENAI_ENGINE` is read from `.env` so you can switch models later without code changes.
+- `TOKEN_URL` can keep `grant_type=client_credentials` in the query string. The backend sends only VOX basic auth plus that URL to obtain the token.
+- `TOKEN_CACHE_MINUTES=20` is the fallback token reuse window when the OAuth response does not include a usable `expires_in`.
+- The backend reuses the cached token until it is near expiry instead of regenerating it on every LLM request.
+- The LLM payload is selected from `VESSEL_OPENAI_API`: `chatCompletion` uses `messages`, while `completions` uses `prompt`.
 - `CHAT_RECENT_LIMIT=10` means only the 10 most recently updated chats keep full messages.
 - `CHAT_CONTEXT_MESSAGE_LIMIT=6` means only the most recent 6 messages from the active chat are added as prompt memory.
 - `CHAT_CONTEXT_PROMPT_CHAR_LIMIT=2500` caps chat memory size before it is sent to the LLM.
@@ -260,7 +265,7 @@ Base path: `/api/v1/llm`
 
 ### `POST /answer`
 
-Generates a VOX access token, sends the prompt to the Vessel OpenAI gateway, and returns a concise answer.
+Generates or reuses a cached VOX access token, sends the prompt to the configured LLM gateway, and returns a concise answer.
 
 ```json
 {
@@ -284,7 +289,7 @@ If token generation or the LLM call fails, the API returns an HTTP error with a 
 
 ### `GET /health-check`
 
-Forces fresh token generation from `TOKEN_URL`, returns the generated access token, and sends a minimal prompt to the Vessel OpenAI API so you can verify both token generation and LLM connectivity.
+Reuses the cached token when it is still valid, otherwise generates a new one from `TOKEN_URL`, returns the access token, and sends a minimal prompt to the configured LLM gateway so you can verify both token generation and LLM connectivity.
 
 Response:
 

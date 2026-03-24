@@ -27,6 +27,7 @@ class TokenPayload:
     access_token: str
     expires_at: datetime | None
     token_type: str | None = None
+    provider_status_code: int | None = None
 
 
 class LlmService:
@@ -49,8 +50,11 @@ class LlmService:
 
     async def generate_text(self, prompt: str) -> tuple[str, str | None]:
         self._validate_settings()
-        token = await self._get_access_token()
-        provider_response = await self._call_llm(prompt=prompt, token=token)
+        token_payload = await self._get_token_payload()
+        provider_response = await self._call_llm(
+            prompt=prompt,
+            token=token_payload.access_token,
+        )
         answer = self._extract_answer(provider_response["body"])
 
         if not answer:
@@ -71,12 +75,7 @@ class LlmService:
     async def health_check(self) -> LlmHealthCheckResponse:
         self._validate_settings()
 
-        response_body, token_status_code = await self._request_access_token()
-        token_payload = self._build_token_payload(
-            response_body=response_body,
-            status_code=token_status_code,
-        )
-        self._token_payload = token_payload
+        token_payload = await self._get_token_payload()
 
         prompt = "Reply with HEALTHCHECK_OK only."
         provider_response = await self._call_llm(
@@ -108,7 +107,7 @@ class LlmService:
                 if token_payload.expires_at is not None
                 else None
             ),
-            token_provider_status_code=token_status_code,
+            token_provider_status_code=token_payload.provider_status_code or 200,
             llm_provider_status_code=provider_response["status_code"],
             engine=settings.vessel_openai_engine,
             llm_answer=answer,
@@ -140,22 +139,22 @@ class LlmService:
             "Say that the info is not found in the document."
         )
 
-    async def _get_access_token(self) -> str:
+    async def _get_token_payload(self) -> TokenPayload:
         cached_token = self._token_payload
         if cached_token and self._is_token_valid(cached_token):
-            return cached_token.access_token
+            return cached_token
 
         async with self._token_lock:
             cached_token = self._token_payload
             if cached_token and self._is_token_valid(cached_token):
-                return cached_token.access_token
+                return cached_token
 
             response_body, status_code = await self._request_access_token()
             self._token_payload = self._build_token_payload(
                 response_body=response_body,
                 status_code=status_code,
             )
-            return self._token_payload.access_token
+            return self._token_payload
 
     async def _request_access_token(self) -> tuple[dict[str, Any], int]:
         try:
@@ -219,12 +218,7 @@ class LlmService:
             ) from exc
 
     async def _call_llm(self, *, prompt: str, token: str) -> dict[str, Any]:
-        payload = {
-            "engine": settings.vessel_openai_engine,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": settings.vessel_openai_temperature,
-            "max_tokens": settings.vessel_openai_max_tokens,
-        }
+        payload = self._build_llm_payload(prompt)
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
@@ -267,8 +261,9 @@ class LlmService:
                 detail={
                     "source": "llm_call",
                     "message": (
-                        "The Vessel OpenAI API rejected the request. "
-                        "Check the OAuth token, engine, and downstream API availability."
+                        "The LLM gateway rejected the request. "
+                        "Verify the OAuth token, engine, gateway URL, and payload mode "
+                        "(chatCompletion vs completions)."
                     ),
                     "provider_status_code": exc.response.status_code,
                     "provider_response": self._safe_error_body(exc.response),
@@ -324,12 +319,20 @@ class LlmService:
             access_token=access_token.strip(),
             expires_at=self._resolve_expiry(response_body.get("expires_in")),
             token_type=token_type.strip() if isinstance(token_type, str) else None,
+            provider_status_code=status_code,
         )
 
     def _resolve_expiry(self, expires_in: Any) -> datetime | None:
-        if not isinstance(expires_in, int | float):
-            return None
-        return datetime.now(UTC) + timedelta(seconds=float(expires_in))
+        if isinstance(expires_in, str):
+            try:
+                expires_in = float(expires_in)
+            except ValueError:
+                expires_in = None
+
+        if isinstance(expires_in, int | float) and float(expires_in) > 0:
+            return datetime.now(UTC) + timedelta(seconds=float(expires_in))
+
+        return datetime.now(UTC) + timedelta(minutes=settings.token_cache_minutes)
 
     def _is_token_valid(self, token_payload: TokenPayload) -> bool:
         if token_payload.expires_at is None:
@@ -344,6 +347,10 @@ class LlmService:
         first_choice = choices[0]
         if not isinstance(first_choice, dict):
             return ""
+
+        text = first_choice.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
 
         message = first_choice.get("message")
         if not isinstance(message, dict):
@@ -362,6 +369,24 @@ class LlmService:
             return "\n".join(chunk.strip() for chunk in text_chunks if chunk.strip())
 
         return ""
+
+    def _build_llm_payload(self, prompt: str) -> dict[str, Any]:
+        payload = {
+            "engine": settings.vessel_openai_engine,
+            "temperature": settings.vessel_openai_temperature,
+            "max_tokens": settings.vessel_openai_max_tokens,
+        }
+
+        if self._uses_chat_completions():
+            payload["messages"] = [{"role": "user", "content": prompt}]
+            return payload
+
+        payload["prompt"] = prompt
+        return payload
+
+    def _uses_chat_completions(self) -> bool:
+        llm_url = settings.vessel_openai_api.lower()
+        return "chatcompletion" in llm_url or "chat/completions" in llm_url
 
     def _safe_error_body(self, response: httpx.Response) -> str:
         try:

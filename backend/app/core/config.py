@@ -46,6 +46,7 @@ class Settings:
     vessel_openai_engine: str = os.getenv("VESSEL_OPENAI_ENGINE", "gpt-4o-mini")
     vessel_openai_temperature: float = float(os.getenv("VESSEL_OPENAI_TEMPERATURE", "0.1"))
     vessel_openai_max_tokens: int = int(os.getenv("VESSEL_OPENAI_MAX_TOKENS", "10000"))
+    token_cache_minutes: int = int(os.getenv("TOKEN_CACHE_MINUTES", "20"))
     token_request_timeout_seconds: float = float(
         os.getenv("TOKEN_REQUEST_TIMEOUT_SECONDS", "30")
     )
