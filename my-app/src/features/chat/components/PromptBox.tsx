@@ -1,5 +1,5 @@
-import { useChatStore } from "../../../store/chat.store";
-import { useUiStore } from "../../../store/ui.store";
+import { useChatStore } from "src/store/chat.store";
+import { useUiStore } from "src/store/ui.store";
 
 function SendIcon() {
   return (

@@ -91,6 +91,13 @@ In real backend mode:
 - the selected accounts are sent with each chat request
 - only backend-configured accounts with valid credentials appear in the UI
 
+For deployed environments, replace `http://localhost:8000` with your real backend URL, for example:
+
+```env
+VITE_USE_FAKE_BACKEND=false
+VITE_API_BASE_URL=https://api.your-domain.example.com
+```
+
 If your backend `.env` contains:
 
 ```env

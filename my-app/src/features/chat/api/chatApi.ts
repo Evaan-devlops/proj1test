@@ -1,5 +1,5 @@
 // src/features/chat/api/chatApi.ts
-import { request, requestStream } from "../../../lib/http/client";
+import { request, requestStream } from "src/lib/http";
 import type {
   AccountListResponse,
   ChatStreamRequest,

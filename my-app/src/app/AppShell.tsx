@@ -1,12 +1,12 @@
 import { Suspense, lazy, useEffect } from "react";
-import ChatWindow from "../features/chat/components/ChatWindow";
-import PromptBox from "../features/chat/components/PromptBox";
-import AccountsSidebar from "../features/chat/components/AccountsSidebar";
-import BottomErrorBanner from "../components/BottomErrorBanner";
-import { useChatStore } from "../store/chat.store";
-import { useUiStore } from "../store/ui.store";
+import ChatWindow from "src/features/chat/components/ChatWindow";
+import PromptBox from "src/features/chat/components/PromptBox";
+import AccountsSidebar from "src/features/chat/components/AccountsSidebar";
+import BottomErrorBanner from "src/components/BottomErrorBanner";
+import { useChatStore } from "src/store/chat.store";
+import { useUiStore } from "src/store/ui.store";
 
-const Sidebar = lazy(() => import("../features/chat/components/Sidebar"));
+const Sidebar = lazy(() => import("src/features/chat/components/Sidebar"));
 
 function OpenSidebarIcon() {
   return (

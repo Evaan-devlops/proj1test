@@ -1,7 +1,7 @@
 import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useChatStore, type Message } from "../../../store/chat.store";
-import { useUiStore } from "../../../store/ui.store";
+import { useChatStore, type Message } from "src/store/chat.store";
+import { useUiStore } from "src/store/ui.store";
 import TypingDots from "./TypingDots";
 
 const MarkdownMessage = lazy(() => import("./MarkdownMessage"));

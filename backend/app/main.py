@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -17,6 +18,17 @@ app = FastAPI(
         "configured AWS accounts."
     ),
 )
+
+cors_allowed_origins = settings.get_cors_allowed_origins()
+if cors_allowed_origins:
+    allow_all_origins = "*" in cors_allowed_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"] if allow_all_origins else cors_allowed_origins,
+        allow_credentials=not allow_all_origins,
+        allow_methods=settings.get_cors_allow_methods(),
+        allow_headers=settings.get_cors_allow_headers(),
+    )
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 

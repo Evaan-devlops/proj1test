@@ -19,6 +19,11 @@ const optionalManifestIcons = [
 ].filter((icon): icon is { src: string; sizes: string; type: string } => icon !== null);
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      src: path.resolve(__dirname, "src"),
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),

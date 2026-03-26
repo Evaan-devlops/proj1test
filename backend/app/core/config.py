@@ -29,10 +29,27 @@ class Settings:
     default_cost_days: int = 180
     default_forecast_months: int = 3
     max_parallel_accounts: int = 10
-    chat_context_file: str = os.getenv("CHAT_CONTEXT_FILE", "data/chat_context.jsonl")
+    app_data_dir: str = os.getenv("APP_DATA_DIR", "data")
+    chat_context_file: str = os.getenv(
+        "CHAT_CONTEXT_FILE",
+        f"{app_data_dir}/chat_context.jsonl",
+    )
+    api_response_archive_file: str = os.getenv(
+        "API_RESPONSE_ARCHIVE_FILE",
+        f"{app_data_dir}/api_response_archive.jsonl",
+    )
     chat_recent_limit: int = int(os.getenv("CHAT_RECENT_LIMIT", "10"))
     chat_context_message_limit: int = int(os.getenv("CHAT_CONTEXT_MESSAGE_LIMIT", "6"))
     chat_context_prompt_char_limit: int = int(os.getenv("CHAT_CONTEXT_PROMPT_CHAR_LIMIT", "2500"))
+    cors_allowed_origins_raw: str = os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+    )
+    cors_allow_methods_raw: str = os.getenv(
+        "CORS_ALLOW_METHODS",
+        "GET,POST,PATCH,DELETE,OPTIONS",
+    )
+    cors_allow_headers_raw: str = os.getenv("CORS_ALLOW_HEADERS", "*")
     vox_user: str = os.getenv("VOX_USER", "")
     vox_password: str = os.getenv("VOX_PASSWORD", "")
     token_url: str = os.getenv(
@@ -106,6 +123,29 @@ class Settings:
                 f"Missing required LLM environment settings: {missing_env}. "
                 "Update your .env file before using the LLM endpoint."
             )
+
+    def get_cors_allowed_origins(self) -> list[str]:
+        return [
+            item.strip()
+            for item in self.cors_allowed_origins_raw.split(",")
+            if item.strip()
+        ]
+
+    def get_cors_allow_methods(self) -> list[str]:
+        return [
+            item.strip().upper()
+            for item in self.cors_allow_methods_raw.split(",")
+            if item.strip()
+        ] or ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
+
+    def get_cors_allow_headers(self) -> list[str]:
+        if self.cors_allow_headers_raw.strip() == "*":
+            return ["*"]
+        return [
+            item.strip()
+            for item in self.cors_allow_headers_raw.split(",")
+            if item.strip()
+        ] or ["*"]
 
     def resolve_path(self, value: str | Path) -> Path:
         path = Path(value)

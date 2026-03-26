@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { useChatStore } from "../../../store/chat.store";
+import { useChatStore } from "src/store/chat.store";
 
 const DeleteChatDialog = lazy(() => import("./DeleteChatDialog"));
 const RenameInlineForm = lazy(() => import("./RenameInlineForm"));

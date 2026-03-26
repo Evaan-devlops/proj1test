@@ -1,6 +1,6 @@
 // src/store/chat.store.ts
-import { chatApi } from "../features/chat/api/chatApi";
-import type { ChatMessageDto, StreamEvent } from "../features/chat/api/types";
+import { chatApi } from "src/features/chat/api/chatApi";
+import type { ChatMessageDto, StreamEvent } from "src/features/chat/api/types";
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 

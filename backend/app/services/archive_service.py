@@ -23,8 +23,10 @@ class ApiResponseArchiveService:
         "idle_days",
     )
 
-    def __init__(self, archive_path: str = "data/api_response_archive.jsonl") -> None:
-        self.archive_path = settings.resolve_path(archive_path)
+    def __init__(self, archive_path: str | None = None) -> None:
+        self.archive_path = settings.resolve_path(
+            archive_path or settings.api_response_archive_file
+        )
         self.archive_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
 

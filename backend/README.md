@@ -20,6 +20,7 @@ FastAPI service for querying AWS cost, budget, forecast, resource, and EC2 idle 
 - Python 3.12+
 - AWS credentials for each configured account
 - VOX credentials for the LLM endpoint
+- writable persistent storage for JSONL files when deployed outside local development
 - Access to the AWS APIs used by this app:
   - Cost Explorer
   - Budgets
@@ -44,6 +45,7 @@ Generated files note:
 - `data/api_response_archive.jsonl` is created automatically when the first AWS result is archived
 - Python `__pycache__` folders are generated automatically by Python and do not need to be copied
 - frontend `node_modules` and `dist` also do not need to be copied
+- for deployed environments, keep these JSONL files on persistent storage if you want chat/archive data to survive restarts
 
 If you are using PowerShell:
 
@@ -118,6 +120,7 @@ Path handling note:
 - backend `.env` is resolved from the `backend` folder itself
 - `data/chat_context.jsonl` and `data/api_response_archive.jsonl` are also resolved relative to `backend`
 - this makes the backend more portable when moved to another VS Code workspace
+- in deployed environments, you can point JSONL files to an absolute mounted path such as `/mnt/app-data/...`
 
 ## Configuration
 
@@ -149,18 +152,28 @@ VESSEL_OPENAI_MAX_TOKENS=10000
 TOKEN_CACHE_MINUTES=20
 TOKEN_REQUEST_TIMEOUT_SECONDS=30
 LLM_REQUEST_TIMEOUT_SECONDS=60
+APP_DATA_DIR=data
 CHAT_CONTEXT_FILE=data/chat_context.jsonl
+API_RESPONSE_ARCHIVE_FILE=data/api_response_archive.jsonl
 CHAT_RECENT_LIMIT=10
 CHAT_CONTEXT_MESSAGE_LIMIT=6
 CHAT_CONTEXT_PROMPT_CHAR_LIMIT=2500
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+CORS_ALLOW_METHODS=GET,POST,PATCH,DELETE,OPTIONS
+CORS_ALLOW_HEADERS=*
 ```
 
 Notes:
 
 - `AWS_ACCOUNT__<KEY>__ACCOUNT_ID` is optional. If omitted, the app resolves it with STS `GetCallerIdentity`.
 - Accounts missing `ACCESS_KEY_ID` or `SECRET_ACCESS_KEY` are ignored.
+- `AWS_ACCOUNT_KEYS` can include accounts other than the account where this app is deployed. For example, if the app is deployed in the `dev` AWS account, it can still query `prod` as long as `AWS_ACCOUNT_KEYS=dev,prod` and both account credential blocks are present in `.env`.
 - If `account_keys` is omitted in a request body, the API queries all configured accounts.
 - Default region is `us-east-1`.
+- `APP_DATA_DIR` is the simplest way to move both JSONL files onto persistent storage in deployed environments.
+- `API_RESPONSE_ARCHIVE_FILE` overrides only the AWS archive JSONL path when you need separate control.
+- `CORS_ALLOWED_ORIGINS` should contain the frontend origin in local development and in deployed environments when frontend and backend are on different domains.
+- If frontend and backend are served from the same origin through a reverse proxy, CORS may not be needed, but the current backend supports explicit origins for both local and deployed setups.
 - `VESSEL_OPENAI_ENGINE` is read from `.env` so you can switch models later without code changes.
 - `TOKEN_URL` can keep `grant_type=client_credentials` in the query string. The backend sends only VOX basic auth plus that URL to obtain the token.
 - `VESSEL_OPENAI_PAYLOAD_MODE=model_messages` is the right setting for the Pfizer gateways shown so far, including `.../chatCompletion` and `.../vox-genai-api/completions`.
@@ -170,6 +183,65 @@ Notes:
 - `CHAT_RECENT_LIMIT=10` means only the 10 most recently updated chats keep full messages.
 - `CHAT_CONTEXT_MESSAGE_LIMIT=6` means only the most recent 6 messages from the active chat are added as prompt memory.
 - `CHAT_CONTEXT_PROMPT_CHAR_LIMIT=2500` caps chat memory size before it is sent to the LLM.
+
+## AWS Deployment
+
+This app can be deployed in one AWS account and still query other AWS accounts.
+
+Example:
+
+- deploy the app in `dev`
+- keep `AWS_ACCOUNT_KEYS=dev,prod`
+- include both `AWS_ACCOUNT__DEV__...` and `AWS_ACCOUNT__PROD__...` variables in the backend `.env`
+- the backend will use the configured credentials for each selected account independently
+
+Recommended deployment shape:
+
+1. Deploy the frontend as static files on S3 + CloudFront or AWS Amplify Hosting.
+2. Deploy the backend on ECS/Fargate, ECS/EC2, or EC2 behind an Application Load Balancer.
+3. Mount persistent storage for JSONL files and point the backend to it with environment variables.
+4. Set the frontend `VITE_API_BASE_URL` to the public backend URL.
+5. Set `CORS_ALLOWED_ORIGINS` on the backend to the frontend URL when frontend and backend use different origins.
+
+JSONL persistence on AWS:
+
+- this app can continue using JSONL after deployment
+- do not keep JSONL only inside an ephemeral container filesystem if you want data to survive task restarts or deployments
+- mount persistent storage such as Amazon EFS to the backend container or instance
+- then point these environment variables to that mounted path
+
+Example deployed backend environment:
+
+```env
+AWS_ACCOUNT_KEYS=dev,prod
+
+AWS_ACCOUNT__DEV__ACCESS_KEY_ID=...
+AWS_ACCOUNT__DEV__SECRET_ACCESS_KEY=...
+AWS_ACCOUNT__DEV__REGION=us-east-1
+
+AWS_ACCOUNT__PROD__ACCESS_KEY_ID=...
+AWS_ACCOUNT__PROD__SECRET_ACCESS_KEY=...
+AWS_ACCOUNT__PROD__REGION=us-east-1
+
+APP_DATA_DIR=/mnt/app-data/aws-insights
+CHAT_CONTEXT_FILE=/mnt/app-data/aws-insights/chat_context.jsonl
+API_RESPONSE_ARCHIVE_FILE=/mnt/app-data/aws-insights/api_response_archive.jsonl
+
+CORS_ALLOWED_ORIGINS=https://your-frontend.example.com
+```
+
+If you run more than one backend instance:
+
+- JSONL files should still live on shared persistent storage
+- operationally, the safest setup is a single backend writer instance unless you explicitly validate multi-writer behavior on the shared filesystem
+
+If you run one backend instance with persistent mounted storage, JSONL behavior will remain closest to local development.
+
+Helpful AWS references:
+
+- CloudFront secure static website: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/getting-started-secure-static-website-cloudformation-template.html
+- ECS task definition parameters: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters-managed-instances.html
+- Amazon EFS volumes for ECS tasks: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/efs-volumes.html
 
 ## API Endpoints
 
