@@ -1,6 +1,6 @@
 // src/store/chat.store.ts
-import { chatApi } from "@/features/chat/api/chatApi";
-import type { ChatMessageDto, StreamEvent } from "@/features/chat/api/types";
+import { chatApi } from "../features/chat/api/chatApi";
+import type { ChatMessageDto, StreamEvent } from "../features/chat/api/types";
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 
@@ -27,6 +27,7 @@ export type ChatStore = {
   chats: Chat[];
   chatsLoaded: boolean;
   isLoadingChats: boolean;
+  lastError: string | null;
   availableAccountKeys: string[];
   selectedAccountKeys: string[];
   accountsLoaded: boolean;
@@ -47,11 +48,12 @@ export type ChatStore = {
   loadMessagesIfNeeded: (chatId: string) => Promise<void>;
   newChat: () => Promise<string | null>;
   setActiveChat: (chatId: string) => void;
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string) => Promise<boolean>;
   resendEditedPrompt: (userMessageId: string, newText: string) => Promise<void>;
   stopStreaming: () => void;
   renameChat: (chatId: string, title: string) => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
+  clearError: () => void;
 };
 
 type SetFn = Parameters<StateCreator<ChatStore>>[0];
@@ -87,6 +89,10 @@ function parseStreamEvent(chunk: string): StreamEvent | null {
   } catch {
     return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 async function ensureActiveChatId(get: GetFn): Promise<string | null> {
@@ -160,6 +166,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
   chats: [],
   chatsLoaded: false,
   isLoadingChats: false,
+  lastError: null,
   availableAccountKeys: [],
   selectedAccountKeys: [],
   accountsLoaded: false,
@@ -172,6 +179,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
   activeStreamChatId: null,
   streamCancel: null,
   streamTimerId: null,
+  clearError: () => set({ lastError: null }),
 
   loadAccounts: async () => {
     if (get().accountsLoaded) return;
@@ -179,6 +187,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     if (USE_FAKE) {
       const fakeAccounts = ["dev", "prod"];
       set({
+        lastError: null,
         availableAccountKeys: fakeAccounts,
         selectedAccountKeys: fakeAccounts,
         accountsLoaded: true,
@@ -187,10 +196,26 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     }
 
     const result = await chatApi.listAccounts();
-    if (!result.ok || !result.data) return;
+    if (!result.ok || !result.data) {
+      set({
+        lastError: result.ok
+          ? "Accounts response was empty."
+          : `Unable to load accounts. ${result.error.message}`,
+      });
+      return;
+    }
 
-    const accountKeys = (result.data.accounts ?? []).map((account) => account.account_key);
+    const accounts = Array.isArray(result.data.accounts) ? result.data.accounts : null;
+    if (!accounts) {
+      set({ lastError: "Accounts response had an unexpected format." });
+      return;
+    }
+
+    const accountKeys = accounts
+      .filter((account) => account && typeof account.account_key === "string")
+      .map((account) => account.account_key);
     set({
+      lastError: null,
       availableAccountKeys: accountKeys,
       selectedAccountKeys: accountKeys,
       accountsLoaded: true,
@@ -216,7 +241,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     if (get().isLoadingChats || get().chatsLoaded) return;
 
     if (USE_FAKE) {
-      set({ chatsLoaded: true, isLoadingChats: false });
+      set({ lastError: null, chatsLoaded: true, isLoadingChats: false });
       if (!get().activeChatId) {
         await get().newChat();
       }
@@ -227,11 +252,26 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     const result = await chatApi.listChats({ limit: 50 });
 
     if (!result.ok || !result.data) {
-      set({ isLoadingChats: false, chatsLoaded: false });
+      set({
+        lastError: result.ok
+          ? "Chats response was empty."
+          : `Unable to load chats. ${result.error.message}`,
+        isLoadingChats: false,
+        chatsLoaded: false,
+      });
       return;
     }
 
-    const items = result.data.items ?? [];
+    const items = Array.isArray(result.data.items) ? result.data.items : null;
+    if (!items) {
+      set({
+        lastError: "Chats response had an unexpected format.",
+        isLoadingChats: false,
+        chatsLoaded: false,
+      });
+      return;
+    }
+
     set((state) => {
       const mapped = sortChatsDescending(
         items.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAtMs }))
@@ -245,6 +285,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
       return {
         chats: mapped,
         activeChatId: state.activeChatId ?? (mapped[0]?.id ?? null),
+        lastError: null,
         messagesByChatId,
         messagesLoadedByChatId: messagesLoaded,
         chatsLoaded: true,
@@ -259,13 +300,26 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
   loadMessagesIfNeeded: async (chatId) => {
     if (get().messagesLoadedByChatId[chatId]) return;
     const result = await chatApi.listMessages(chatId, { limit: 200 });
-    if (!result.ok || !result.data) return;
+    if (!result.ok || !result.data) {
+      set({
+        lastError: result.ok
+          ? "Messages response was empty."
+          : `Unable to load messages. ${result.error.message}`,
+      });
+      return;
+    }
 
-    const items = result.data.items ?? [];
+    const items = Array.isArray(result.data.items) ? result.data.items : null;
+    if (!items) {
+      set({ lastError: "Messages response had an unexpected format." });
+      return;
+    }
+
     const mapped = items.map((m) => mapDtoToMessage(m));
     const lastUser = [...mapped].reverse().find((m) => m.role === "user");
 
     set((state) => ({
+      lastError: null,
       messagesByChatId: { ...state.messagesByChatId, [chatId]: mapped },
       messagesLoadedByChatId: { ...state.messagesLoadedByChatId, [chatId]: true },
       latestUserMessageIdByChatId: lastUser
@@ -282,6 +336,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
       const now = Date.now();
       const id = genId("chat");
       set((state) => ({
+        lastError: null,
         chats: sortChatsDescending([{ id, title: "New chat", updatedAt: now }, ...state.chats]),
         activeChatId: id,
         messagesByChatId: { ...state.messagesByChatId, [id]: [] },
@@ -291,9 +346,21 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     }
 
     const result = await chatApi.createChat({ title: "New chat" });
-    if (!result.ok || !result.data) return null;
+    if (!result.ok || !result.data) {
+      set({
+        lastError: result.ok
+          ? "Create chat response was empty."
+          : `Unable to create a new chat. ${result.error.message}`,
+      });
+      return null;
+    }
     const chat = result.data.chat;
+    if (!isRecord(chat) || typeof chat.id !== "string" || typeof chat.title !== "string") {
+      set({ lastError: "Create chat response had an unexpected format." });
+      return null;
+    }
     set((state) => ({
+      lastError: null,
       chats: sortChatsDescending([
         { id: chat.id, title: chat.title, updatedAt: chat.updatedAtMs },
         ...state.chats.filter((c) => c.id !== chat.id),
@@ -309,9 +376,21 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     const trimmed = title.trim();
     if (!trimmed) return;
     const result = await chatApi.renameChat(chatId, { title: trimmed });
-    if (!result.ok || !result.data) return;
+    if (!result.ok || !result.data) {
+      set({
+        lastError: result.ok
+          ? "Rename chat response was empty."
+          : `Unable to rename the chat. ${result.error.message}`,
+      });
+      return;
+    }
     const chat = result.data.chat;
+    if (!isRecord(chat) || typeof chat.title !== "string") {
+      set({ lastError: "Rename chat response had an unexpected format." });
+      return;
+    }
     set((state) => ({
+      lastError: null,
       chats: sortChatsDescending(
         state.chats.map((c) => (c.id === chatId ? { ...c, title: chat.title, updatedAt: chat.updatedAtMs } : c))
       ),
@@ -321,7 +400,10 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
   deleteChat: async (chatId) => {
     if (get().activeStreamChatId === chatId) get().stopStreaming();
     const result = await chatApi.deleteChat(chatId);
-    if (!result.ok) return;
+    if (!result.ok) {
+      set({ lastError: `Unable to delete the chat. ${result.error.message}` });
+      return;
+    }
     set((state) => {
       const nextChats = state.chats.filter((c) => c.id !== chatId);
       const restMessages = { ...state.messagesByChatId };
@@ -337,6 +419,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
       return {
         chats: nextChats,
         activeChatId: nextActive,
+        lastError: null,
         messagesByChatId: restMessages,
         messagesLoadedByChatId: restLoaded,
         latestUserMessageIdByChatId: restLatest,
@@ -353,11 +436,14 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
 
   sendMessage: async (text) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    if (get().isStreaming) return;
+    if (!trimmed) return false;
+    if (get().isStreaming) return false;
 
     const chatId = await ensureActiveChatId(get);
-    if (!chatId) return;
+    if (!chatId) {
+      set({ lastError: "Unable to open a chat for sending the message." });
+      return false;
+    }
 
     const now = Date.now();
     const title = makeTitleFromText(trimmed);
@@ -392,6 +478,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
               : c
           )
         ),
+        lastError: null,
         isStreaming: true,
         activeStreamChatId: chatId,
         streamCancel: null,
@@ -399,7 +486,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
       }));
 
       startFakeStreaming(chatId, get, set);
-      return;
+      return true;
     }
 
     const tempUserId = genId("msg_user");
@@ -434,6 +521,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
             : c
         )
       ),
+      lastError: null,
       isStreaming: true,
       activeStreamChatId: chatId,
       streamCancel: null,
@@ -457,6 +545,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
           text: last.text || `[Error: ${response.error.message}]`,
         };
         return {
+          lastError: `Unable to send the message. ${response.error.message}`,
           messagesByChatId: { ...state.messagesByChatId, [chatId]: [...msgs.slice(0, -1), updated] },
           isStreaming: false,
           activeStreamChatId: null,
@@ -464,23 +553,29 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
           streamTimerId: null,
         };
       });
-      return;
+      return false;
     }
 
     set({ streamCancel: response.cancel });
 
     try {
+      let completed = false;
       for await (const chunk of response.stream) {
         const evt = parseStreamEvent(chunk);
         if (!evt) continue;
 
         if (evt.type === "start") {
+          if (!isRecord(evt.userMessage) || !isRecord(evt.assistantMessage)) {
+            set({ lastError: "Chat stream started with an unexpected payload." });
+            continue;
+          }
           set((state) => {
             const msgs = state.messagesByChatId[chatId] ?? [];
             const base = msgs.slice(0, -2);
             const userMsg = mapDtoToMessage(evt.userMessage, "final");
             const assistantMsg = mapDtoToMessage(evt.assistantMessage, "streaming");
             return {
+              lastError: null,
               messagesByChatId: {
                 ...state.messagesByChatId,
                 [chatId]: [...base, userMsg, assistantMsg],
@@ -508,6 +603,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
         }
 
         if (evt.type === "final") {
+          completed = true;
           set((state) => {
             const msgs = state.messagesByChatId[chatId] ?? [];
             const idx = msgs.findIndex((m) => m.id === evt.messageId);
@@ -522,6 +618,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
             const next = [...msgs];
             next[idx] = updated;
             return {
+              lastError: null,
               messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
               isStreaming: false,
               activeStreamChatId: null,
@@ -533,13 +630,103 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
         }
 
         if (evt.type === "error") {
-          set({ isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null });
-          break;
+          set((state) => {
+            const msgs = state.messagesByChatId[chatId] ?? [];
+            const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
+            if (idx === -1) {
+              return {
+                lastError: `Chat failed. ${evt.message}`,
+                isStreaming: false,
+                activeStreamChatId: null,
+                streamCancel: null,
+                streamTimerId: null,
+              };
+            }
+            const next = [...msgs];
+            next[idx] = {
+              ...next[idx],
+              status: "error" as MsgStatus,
+              text: next[idx].text || `[Error: ${evt.message}]`,
+            };
+            return {
+              lastError: `Chat failed. ${evt.message}`,
+              messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
+              isStreaming: false,
+              activeStreamChatId: null,
+              streamCancel: null,
+              streamTimerId: null,
+            };
+          });
+          return false;
         }
       }
+      if (!completed) {
+        if (get().activeStreamChatId !== chatId || !get().isStreaming) {
+          return true;
+        }
+        set((state) => {
+          const msgs = state.messagesByChatId[chatId] ?? [];
+          const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
+          if (idx === -1) {
+            return {
+              lastError: "Chat response ended unexpectedly. Please try again.",
+              isStreaming: false,
+              activeStreamChatId: null,
+              streamCancel: null,
+              streamTimerId: null,
+            };
+          }
+          const next = [...msgs];
+          next[idx] = {
+            ...next[idx],
+            status: "error" as MsgStatus,
+            text: next[idx].text || "[Error: Chat response ended unexpectedly.]",
+          };
+          return {
+            lastError: "Chat response ended unexpectedly. Please try again.",
+            messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
+            isStreaming: false,
+            activeStreamChatId: null,
+            streamCancel: null,
+            streamTimerId: null,
+          };
+        });
+        return false;
+      }
     } catch {
-      set({ isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null });
+      if (get().activeStreamChatId !== chatId || !get().isStreaming) {
+        return true;
+      }
+      set((state) => {
+        const msgs = state.messagesByChatId[chatId] ?? [];
+        const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
+        if (idx === -1) {
+          return {
+            lastError: "Chat request failed unexpectedly. Please try again.",
+            isStreaming: false,
+            activeStreamChatId: null,
+            streamCancel: null,
+            streamTimerId: null,
+          };
+        }
+        const next = [...msgs];
+        next[idx] = {
+          ...next[idx],
+          status: "error" as MsgStatus,
+          text: next[idx].text || "[Error: Chat request failed unexpectedly.]",
+        };
+        return {
+          lastError: "Chat request failed unexpectedly. Please try again.",
+          messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
+          isStreaming: false,
+          activeStreamChatId: null,
+          streamCancel: null,
+          streamTimerId: null,
+        };
+      });
+      return false;
     }
+    return true;
   },
 
   resendEditedPrompt: async (userMessageId, newText) => {
@@ -593,8 +780,13 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
           return { isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null };
         }
         const next = [...msgs];
-        next[idx] = { ...next[idx], status: "error" as MsgStatus };
+        next[idx] = {
+          ...next[idx],
+          status: "error" as MsgStatus,
+          text: next[idx].text || `[Error: ${response.error.message}]`,
+        };
         return {
+          lastError: `Unable to regenerate the response. ${response.error.message}`,
           messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
           isStreaming: false,
           activeStreamChatId: null,
@@ -608,11 +800,16 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     set({ streamCancel: response.cancel });
 
     try {
+      let completed = false;
       for await (const chunk of response.stream) {
         const evt = parseStreamEvent(chunk);
         if (!evt) continue;
 
         if (evt.type === "start") {
+          if (!isRecord(evt.userMessage) || !isRecord(evt.assistantMessage)) {
+            set({ lastError: "Regenerated chat stream started with an unexpected payload." });
+            continue;
+          }
           set((state) => {
             const msgs = state.messagesByChatId[chatId] ?? [];
             const idx = msgs.findIndex((m) => m.id === userMessageId && m.role === "user");
@@ -624,6 +821,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
             if (next[idx + 1] && next[idx + 1].role === "assistant") next.splice(idx + 1, 1);
             next.splice(idx + 1, 0, assistantMsg);
             return {
+              lastError: null,
               messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
               latestUserMessageIdByChatId: { ...state.latestUserMessageIdByChatId, [chatId]: userMsg.id },
               focusedUserMessageIdByChatId: { ...state.focusedUserMessageIdByChatId, [chatId]: userMsg.id },
@@ -648,6 +846,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
         }
 
         if (evt.type === "final") {
+          completed = true;
           set((state) => {
             const msgs = state.messagesByChatId[chatId] ?? [];
             const idx = msgs.findIndex((m) => m.id === evt.messageId);
@@ -662,6 +861,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
             const next = [...msgs];
             next[idx] = updated;
             return {
+              lastError: null,
               messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
               isStreaming: false,
               activeStreamChatId: null,
@@ -673,12 +873,99 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
         }
 
         if (evt.type === "error") {
-          set({ isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null });
-          break;
+          set((state) => {
+            const msgs = state.messagesByChatId[chatId] ?? [];
+            const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
+            if (idx === -1) {
+              return {
+                lastError: `Regenerate failed. ${evt.message}`,
+                isStreaming: false,
+                activeStreamChatId: null,
+                streamCancel: null,
+                streamTimerId: null,
+              };
+            }
+            const next = [...msgs];
+            next[idx] = {
+              ...next[idx],
+              status: "error" as MsgStatus,
+              text: next[idx].text || `[Error: ${evt.message}]`,
+            };
+            return {
+              lastError: `Regenerate failed. ${evt.message}`,
+              messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
+              isStreaming: false,
+              activeStreamChatId: null,
+              streamCancel: null,
+              streamTimerId: null,
+            };
+          });
+          return;
         }
       }
+      if (!completed) {
+        if (get().activeStreamChatId !== chatId || !get().isStreaming) {
+          return;
+        }
+        set((state) => {
+          const msgs = state.messagesByChatId[chatId] ?? [];
+          const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
+          if (idx === -1) {
+            return {
+              lastError: "Regenerated response ended unexpectedly. Please try again.",
+              isStreaming: false,
+              activeStreamChatId: null,
+              streamCancel: null,
+              streamTimerId: null,
+            };
+          }
+          const next = [...msgs];
+          next[idx] = {
+            ...next[idx],
+            status: "error" as MsgStatus,
+            text: next[idx].text || "[Error: Regenerated response ended unexpectedly.]",
+          };
+          return {
+            lastError: "Regenerated response ended unexpectedly. Please try again.",
+            messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
+            isStreaming: false,
+            activeStreamChatId: null,
+            streamCancel: null,
+            streamTimerId: null,
+          };
+        });
+      }
     } catch {
-      set({ isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null });
+      if (get().activeStreamChatId !== chatId || !get().isStreaming) {
+        return;
+      }
+      set((state) => {
+        const msgs = state.messagesByChatId[chatId] ?? [];
+        const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
+        if (idx === -1) {
+          return {
+            lastError: "Regenerate request failed unexpectedly. Please try again.",
+            isStreaming: false,
+            activeStreamChatId: null,
+            streamCancel: null,
+            streamTimerId: null,
+          };
+        }
+        const next = [...msgs];
+        next[idx] = {
+          ...next[idx],
+          status: "error" as MsgStatus,
+          text: next[idx].text || "[Error: Regenerate request failed unexpectedly.]",
+        };
+        return {
+          lastError: "Regenerate request failed unexpectedly. Please try again.",
+          messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
+          isStreaming: false,
+          activeStreamChatId: null,
+          streamCancel: null,
+          streamTimerId: null,
+        };
+      });
     }
   },
 

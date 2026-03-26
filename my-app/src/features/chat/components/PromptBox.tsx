@@ -1,5 +1,5 @@
-import { useChatStore } from "@/store/chat.store";
-import { useUiStore } from "@/store/ui.store";
+import { useChatStore } from "../../../store/chat.store";
+import { useUiStore } from "../../../store/ui.store";
 
 function SendIcon() {
   return (
@@ -35,8 +35,8 @@ export default function PromptBox() {
     }
     if (!canSend) return;
 
-    await sendMessage(text);
-    clearComposerText();
+    const sent = await sendMessage(text);
+    if (sent) clearComposerText();
   }
 
   return (

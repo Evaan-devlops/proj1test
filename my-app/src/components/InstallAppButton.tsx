@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { usePwaInstall } from "@/hooks/usePwaInstall";
+import { usePwaInstall } from "../hooks/usePwaInstall";
 
 export default function InstallAppButton() {
   const { canInstall, install } = usePwaInstall();

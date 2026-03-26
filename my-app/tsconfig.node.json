@@ -14,10 +14,6 @@
     "moduleDetection": "force",
     "noEmit": true,
     "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
-    "paths": {
-      "@/*": ["src/*"]
-    },
 
     /* Linting */
     "strict": true,

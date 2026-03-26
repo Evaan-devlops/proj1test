@@ -1,12 +1,13 @@
 import { Suspense, lazy, useEffect } from "react";
-import ChatWindow from "@/features/chat/components/ChatWindow";
-import PromptBox from "@/features/chat/components/PromptBox";
-import InstallAppButton from "@/components/InstallAppButton";
-import AccountsSidebar from "@/features/chat/components/AccountsSidebar";
-import { useChatStore } from "@/store/chat.store";
-import { useUiStore } from "@/store/ui.store";
+import ChatWindow from "../features/chat/components/ChatWindow";
+import PromptBox from "../features/chat/components/PromptBox";
+import InstallAppButton from "../components/InstallAppButton";
+import AccountsSidebar from "../features/chat/components/AccountsSidebar";
+import BottomErrorBanner from "../components/BottomErrorBanner";
+import { useChatStore } from "../store/chat.store";
+import { useUiStore } from "../store/ui.store";
 
-const Sidebar = lazy(() => import("@/features/chat/components/Sidebar"));
+const Sidebar = lazy(() => import("../features/chat/components/Sidebar"));
 
 function OpenSidebarIcon() {
   return (
@@ -29,6 +30,8 @@ export default function AppShell() {
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const hydrateChats = useChatStore((s) => s.hydrateChats);
   const loadAccounts = useChatStore((s) => s.loadAccounts);
+  const lastError = useChatStore((s) => s.lastError);
+  const clearError = useChatStore((s) => s.clearError);
 
   useEffect(() => {
     void hydrateChats();
@@ -84,6 +87,7 @@ export default function AppShell() {
       </div>
 
       <AccountsSidebar />
+      {lastError ? <BottomErrorBanner message={lastError} onDismiss={clearError} /> : null}
     </div>
   );
 }

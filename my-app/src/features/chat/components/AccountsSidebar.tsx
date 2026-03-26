@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useChatStore } from "@/store/chat.store";
+import { useChatStore } from "../../../store/chat.store";
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (

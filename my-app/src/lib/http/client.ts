@@ -60,7 +60,7 @@ export type ApiStreamResult =
     }
   | { ok: false; error: ApiError };
 
-type StreamOptions = Omit<RequestOptions, "timeoutMs"> & {
+type StreamOptions = Omit<RequestOptions, "timeoutMs" | "mode"> & {
   mode?: StreamMode;
   idleTimeoutMs?: number; // abort stream if no chunk arrives for N ms (optional)
   onOpen?: (info: { status: number; contentType: string }) => void;
