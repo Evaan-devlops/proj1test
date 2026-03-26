@@ -1,7 +1,6 @@
 import { Suspense, lazy, useEffect } from "react";
 import ChatWindow from "../features/chat/components/ChatWindow";
 import PromptBox from "../features/chat/components/PromptBox";
-import InstallAppButton from "../components/InstallAppButton";
 import AccountsSidebar from "../features/chat/components/AccountsSidebar";
 import BottomErrorBanner from "../components/BottomErrorBanner";
 import { useChatStore } from "../store/chat.store";
@@ -52,10 +51,6 @@ export default function AppShell() {
       >
         {sidebarOpen ? <CloseSidebarIcon /> : <OpenSidebarIcon />}
       </button>
-
-      <div className="fixed top-3 right-3 z-[200]">
-        <InstallAppButton />
-      </div>
 
       <div className="flex h-full">
         <div

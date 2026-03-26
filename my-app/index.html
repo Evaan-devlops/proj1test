@@ -27,33 +27,15 @@
 
     <!-- =========================
       OPTIONAL social sharing
-      - Safe to keep even if /og.png doesn't exist.
-      - Worst case: platforms show no image (no runtime errors).
-      - When ready, place an image at: /public/og.png
+      - Keep title/description only so the app does not depend on image files.
     ========================== -->
-    <!-- Social sharing: preview description in link cards -->
     <meta property="og:title" content="My App" />
     <meta
       property="og:description"
       content="Fast chat app with streaming responses, search, and suggestions."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
-
-    <!-- =========================
-      Icons
-      - /public/* files are served at site root.
-      - If these files don't exist, you just won't see the icon
-        (no runtime errors).
-      - Recommended placeholders to add later:
-          /public/favicon.ico
-          /public/apple-touch-icon.png
-      - You can keep Vite's default icon too if you want:
-          /public/vite.svg
-    ========================== -->
-    <link rel="icon" href="/favicon.ico" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
     <!-- =========================
       Performance hint (optional)

@@ -114,7 +114,6 @@ npm run lint
 Copy the full `my-app` folder, especially:
 
 - `src/`
-- `public/`
 - `package.json`
 - `package-lock.json`
 - `vite.config.ts`
@@ -123,6 +122,10 @@ Copy the full `my-app` folder, especially:
 - `tsconfig.node.json`
 - `tailwind.config.ts`
 - `.env.example`
+
+`public/` is optional. If that folder is missing, the app will still run. You only lose optional icons and PWA image assets.
+
+You also do not need to copy any generated `dist/` or `dist/assets/` output. Those files are recreated automatically by `npm run build`.
 
 ## Troubleshooting
 
