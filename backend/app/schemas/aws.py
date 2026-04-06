@@ -306,3 +306,54 @@ class MultiAccountIdleResult(BaseModel):
 
 class MultiAccountIdleResponse(MultiAccountAggregateResponse[MultiAccountIdleResult]):
     succeeded_accounts: list[AccountSuccess[MultiAccountIdleResult]]
+
+
+class AnalyticsServiceSpendItem(BaseModel):
+    service: str
+    cost: float
+
+
+class AnalyticsMonthlyCostItem(BaseModel):
+    month: str
+    cost: float
+
+
+class AnalyticsCertificateItem(BaseModel):
+    certificate_arn: str
+    domain_name: str
+    expiry_date: str
+    days_to_expiry: int
+
+
+class AnalyticsHubAccountSnapshot(BaseModel):
+    account_key: str
+    account_id: str
+    region: str
+    total_cost_30d: float
+    service_spend_30d: list[AnalyticsServiceSpendItem]
+    monthly_cost_trend: list[AnalyticsMonthlyCostItem]
+    expiring_certificates: list[AnalyticsCertificateItem]
+
+
+class AnalyticsHubAccountError(BaseModel):
+    account_key: str
+    account_id: str | None = None
+    region: str | None = None
+    error: str
+
+
+class AnalyticsHubSnapshot(BaseModel):
+    generated_at_utc: str | None = None
+    account_count: int = 0
+    accounts: list[AnalyticsHubAccountSnapshot] = []
+    errors: list[AnalyticsHubAccountError] = []
+
+
+class AnalyticsHubSnapshotResponse(BaseModel):
+    snapshot: AnalyticsHubSnapshot
+    refresh_in_progress: bool = False
+
+
+class AnalyticsHubRefreshResponse(BaseModel):
+    queued: bool
+    refresh_in_progress: bool

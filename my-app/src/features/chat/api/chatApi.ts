@@ -2,6 +2,8 @@
 import { request, requestStream } from "src/lib/http";
 import type {
   AccountListResponse,
+  AnalyticsHubRefreshResponse,
+  AnalyticsHubSnapshotResponse,
   ChatStreamRequest,
   CreateChatRequest,
   CreateChatResponse,
@@ -23,6 +25,14 @@ export const chatApi = {
 
   listAccounts() {
     return request<AccountListResponse>("/api/v1/aws/accounts", { method: "GET" });
+  },
+
+  getAnalyticsHubSnapshot() {
+    return request<AnalyticsHubSnapshotResponse>("/api/v1/aws/analytics-hub/snapshot", { method: "GET" });
+  },
+
+  refreshAnalyticsHubSnapshot() {
+    return request<AnalyticsHubRefreshResponse>("/api/v1/aws/analytics-hub/refresh", { method: "POST" });
   },
 
   createChat(body: CreateChatRequest = {}) {
