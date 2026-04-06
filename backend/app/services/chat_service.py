@@ -53,6 +53,7 @@ class RouteDecision:
     reason: str
     needs_follow_up: bool = False
     follow_up_message: str | None = None
+    direct_answer: str | None = None
 
 
 @dataclass(frozen=True)
@@ -158,12 +159,21 @@ class ChatService:
                 )
             )
 
-            yield self._sse_event(
-                StreamDeltaEvent(
-                    messageId=assistant_message.id,
-                    text="Checking recent AWS data and selecting the best backend tool...\n\n",
+            simple_response = self._simple_conversation_response(query_text)
+            if simple_response is not None:
+                self.chat_store.update_assistant_message(
+                    chat_id=chat_id,
+                    assistant_message_id=assistant_message.id,
+                    text=simple_response,
+                    status="final",
                 )
-            )
+                yield self._sse_event(
+                    StreamFinalEvent(
+                        messageId=assistant_message.id,
+                        fullText=simple_response,
+                    )
+                )
+                return
 
             query_context = self._extract_query_context(
                 query_text=query_text,
@@ -215,6 +225,21 @@ class ChatService:
                 last_tool_context=last_tool_context,
             )
 
+            if route_decision.direct_answer is not None:
+                self.chat_store.update_assistant_message(
+                    chat_id=chat_id,
+                    assistant_message_id=assistant_message.id,
+                    text=route_decision.direct_answer,
+                    status="final",
+                )
+                yield self._sse_event(
+                    StreamFinalEvent(
+                        messageId=assistant_message.id,
+                        fullText=route_decision.direct_answer,
+                    )
+                )
+                return
+
             if route_decision.needs_follow_up:
                 final_text = route_decision.follow_up_message or "Please clarify your request."
                 self.chat_store.update_assistant_message(
@@ -249,6 +274,13 @@ class ChatService:
                     )
                 )
                 return
+
+            yield self._sse_event(
+                StreamDeltaEvent(
+                    messageId=assistant_message.id,
+                    text="Checking recent AWS data and selecting the best backend tool...\n\n",
+                )
+            )
 
             cached_record = self._find_recent_cached_record(
                 endpoint=route_decision.tool.endpoint,
@@ -353,6 +385,10 @@ class ChatService:
         last_tool_context: ChatLastToolContext | None = None,
     ) -> RouteDecision:
         lowered_query = query_text.lower()
+
+        simple_response = self._simple_conversation_response(query_text)
+        if simple_response is not None:
+            return RouteDecision(tool=None, reason="handled as simple conversation", direct_answer=simple_response)
 
         if "account" in lowered_query and any(
             phrase in lowered_query
@@ -823,8 +859,29 @@ class ChatService:
 
     def _looks_like_follow_up(self, query_text: str) -> bool:
         lowered = query_text.lower().strip()
-        if len(lowered.split()) <= 12:
+        if not lowered:
+            return False
+
+        referential_terms = {"it", "its", "that", "this", "them", "those", "these", "same", "above", "earlier"}
+        if any(term in referential_terms for term in lowered.split()):
             return True
+
+        if len(lowered.split()) <= 8 and any(
+            lowered.startswith(prefix)
+            for prefix in (
+                "why ",
+                "how ",
+                "which ",
+                "compare ",
+                "summarize ",
+                "explain ",
+                "show ",
+                "details ",
+                "more ",
+            )
+        ):
+            return True
+
         return any(
             phrase in lowered
             for phrase in (
@@ -841,6 +898,28 @@ class ChatService:
                 "from this",
             )
         )
+
+    def _simple_conversation_response(self, query_text: str) -> str | None:
+        lowered = " ".join(query_text.lower().strip().split())
+        if not lowered:
+            return None
+
+        if lowered in {"hi", "hello", "hey", "good morning", "good afternoon", "good evening", "hiya", "yo"}:
+            return (
+                "Hi. I can help with AWS cost totals, top services, spend trends, budgets, "
+                "resource cost, and EC2 idle checks."
+            )
+
+        if lowered in {"thanks", "thank you", "thx", "ok thanks", "great thanks"}:
+            return "You're welcome. Ask whenever you want AWS cost or usage details."
+
+        if lowered in {"help", "what can you do", "what do you do", "how can you help"}:
+            return (
+                "I can answer AWS-focused questions about total cost, cost breakdown, detailed "
+                "service spend, trends and forecast, named budgets, resource cost, and EC2 idle checks."
+            )
+
+        return None
 
     def _normalize_json_payload(self, value: Any) -> Any:
         if isinstance(value, BaseModel):

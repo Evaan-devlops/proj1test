@@ -1,5 +1,4 @@
 import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { useChatStore, type Message } from "src/store/chat.store";
 import { useUiStore } from "src/store/ui.store";
 import TypingDots from "./TypingDots";
@@ -267,21 +266,14 @@ export default function ChatWindow() {
   const latestUserId = activeChatId ? latestUserMessageIdByChatId[activeChatId] : undefined;
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-
-  const rowVirtualizer = useVirtualizer({
-    count: turns.length,
-    getScrollElement: () => scrollerRef.current,
-    estimateSize: () => 220,
-    overscan: 6,
-  });
+  const turnRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     if (!resolvedFocusedUserId) return;
-    const idx = turns.findIndex((t) => t.user.id === resolvedFocusedUserId);
-    if (idx >= 0) {
-      rowVirtualizer.scrollToIndex(idx, { align: "start" });
-    }
-  }, [resolvedFocusedUserId, turns, rowVirtualizer]);
+    const target = turnRefs.current[resolvedFocusedUserId];
+    if (!target) return;
+    target.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [resolvedFocusedUserId, turns.length]);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -305,46 +297,37 @@ export default function ChatWindow() {
 
   return (
     <div ref={scrollerRef} className="flex-1 min-w-0 overflow-y-auto px-4 pb-6">
-      <div className={["mx-auto w-full pt-10", sidebarOpen ? "max-w-3xl" : "max-w-5xl"].join(" ")}>
-        <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
-          {rowVirtualizer.getVirtualItems().map((v) => {
-            const turn = turns[v.index];
-            const user = turn.user;
-            const assistant = turn.assistant;
+      <div className={["mx-auto flex w-full flex-col gap-10 pt-10", sidebarOpen ? "max-w-3xl" : "max-w-5xl"].join(" ")}>
+        {turns.map((turn) => {
+          const user = turn.user;
+          const assistant = turn.assistant;
 
-            const isFocused = resolvedFocusedUserId === user.id;
-            const assistantFinal = !!assistant && assistant.status === "final";
-            const canRephrase = assistantFinal && user.id === latestUserId && !isStreaming;
+          const isFocused = resolvedFocusedUserId === user.id;
+          const assistantFinal = !!assistant && assistant.status === "final";
+          const canRephrase = assistantFinal && user.id === latestUserId && !isStreaming;
 
-            return (
-              <div
-                key={user.id}
-                ref={rowVirtualizer.measureElement}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${v.start}px)`,
-                }}
-                className="pb-10"
-              >
-                <TurnRow
-                  turn={turn}
-                  isFocused={isFocused}
-                  canRephrase={canRephrase}
-                  copiedId={copiedId}
-                  setCopiedId={setCopiedId}
-                  editingUserId={editingUserId}
-                  setEditingUserId={setEditingUserId}
-                  draft={draft}
-                  setDraft={setDraft}
-                  resendEditedPrompt={resendEditedPrompt}
-                />
-              </div>
-            );
-          })}
-        </div>
+          return (
+            <div
+              key={user.id}
+              ref={(node) => {
+                turnRefs.current[user.id] = node;
+              }}
+            >
+              <TurnRow
+                turn={turn}
+                isFocused={isFocused}
+                canRephrase={canRephrase}
+                copiedId={copiedId}
+                setCopiedId={setCopiedId}
+                editingUserId={editingUserId}
+                setEditingUserId={setEditingUserId}
+                draft={draft}
+                setDraft={setDraft}
+                resendEditedPrompt={resendEditedPrompt}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
