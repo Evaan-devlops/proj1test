@@ -64,6 +64,18 @@ function genId(prefix: string) {
 }
 
 function makeTitleFromText(text: string) {
+  const lowered = text.toLowerCase();
+  if (/(open ?search|search cluster)/.test(lowered)) return "OpenSearch Cost Review";
+  if (/(certificate|acm|ssl|tls)/.test(lowered)) return "Certificate Expiry Review";
+  if (/(dynamodb|table)/.test(lowered)) return "DynamoDB Spend Review";
+  if (/(ebs|volume|snapshot)/.test(lowered)) return "EBS Cost Review";
+  if (/(budget)/.test(lowered)) return "Budget Utilization Review";
+  if (/(forecast|trend|month)/.test(lowered)) return "AWS Spend Trend Review";
+  if (/(resource|instance cost|resource id)/.test(lowered)) return "Resource Cost Analysis";
+  if (/(idle|underused|unused instance|ec2)/.test(lowered)) return "EC2 Utilization Check";
+  if (/(account|environment)/.test(lowered)) return "AWS Account Overview";
+  if (/(cost|spend|pricing|service)/.test(lowered)) return "AWS Cost Review";
+  if (/(hello|hi|hey|help)/.test(lowered)) return "AWS Insights Chat";
   return text.trim().split(/\s+/).slice(0, 4).join(" ");
 }
 

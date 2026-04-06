@@ -1133,6 +1133,29 @@ class ChatService:
         return self._tool_by_name_map.get(tool_name.strip().lower())
 
     def _chat_title_from_text(self, text: str) -> str:
+        lowered = text.lower()
+        if re.search(r"(open ?search|search cluster)", lowered):
+            return "OpenSearch Cost Review"
+        if re.search(r"(certificate|acm|ssl|tls)", lowered):
+            return "Certificate Expiry Review"
+        if re.search(r"(dynamodb|table)", lowered):
+            return "DynamoDB Spend Review"
+        if re.search(r"(ebs|volume|snapshot)", lowered):
+            return "EBS Cost Review"
+        if "budget" in lowered:
+            return "Budget Utilization Review"
+        if re.search(r"(forecast|trend|month)", lowered):
+            return "AWS Spend Trend Review"
+        if re.search(r"(resource|instance cost|resource id)", lowered):
+            return "Resource Cost Analysis"
+        if re.search(r"(idle|underused|unused instance|ec2)", lowered):
+            return "EC2 Utilization Check"
+        if re.search(r"(account|environment)", lowered):
+            return "AWS Account Overview"
+        if re.search(r"(cost|spend|pricing|service)", lowered):
+            return "AWS Cost Review"
+        if re.search(r"(hello|hi|hey|help)", lowered):
+            return "AWS Insights Chat"
         return " ".join(text.strip().split()[:4]) or "New chat"
 
     def _sse_event(self, event: Any) -> str:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import replace
+from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from typing import Any, Callable
@@ -30,6 +32,24 @@ logger = logging.getLogger(__name__)
 
 AWS_COST_METRIC = "UnblendedCost"
 AWS_MONTHLY_GRANULARITY = "MONTHLY"
+PROJECT_NAME_TAG_KEYS = {
+    "application",
+    "applicationname",
+    "app",
+    "product",
+    "productname",
+    "project",
+    "projectname",
+}
+PROJECT_OWNER_TAG_KEYS = {
+    "applicationowner",
+    "businessowner",
+    "contact",
+    "owner",
+    "projectowner",
+    "serviceowner",
+    "team",
+}
 AccountWorker = Callable[[AwsAccountConfig], Any]
 
 
@@ -216,6 +236,7 @@ class AwsInsightsService:
         total_cost = round(sum(service_costs.values()), 2)
         monthly_cost_trend = self._monthly_cost_trend_worker(account, 180)
         expiring_certificates = self._acm_expiry_worker(account, 90)
+        project_metadata = self._project_metadata_worker(account)
 
         sorted_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)
         top_service_rows = [
@@ -233,6 +254,8 @@ class AwsInsightsService:
             "account_key": account.key,
             "account_id": account.account_id,
             "region": account.region,
+            "project_name": project_metadata["project_name"],
+            "project_owner": project_metadata["project_owner"],
             "total_cost_30d": total_cost,
             "service_spend_30d": top_service_rows,
             "monthly_cost_trend": monthly_cost_trend,
@@ -385,6 +408,63 @@ class AwsInsightsService:
 
         rows.sort(key=lambda item: item["expiry_date"])
         return rows[:20]
+
+    def _project_metadata_worker(self, account: AwsAccountConfig) -> dict[str, str | None]:
+        try:
+            client = self._client_factory(account).tagging()
+            paginator = client.get_paginator("get_resources")
+            project_names: Counter[str] = Counter()
+            project_owners: Counter[str] = Counter()
+
+            for page in paginator.paginate(ResourcesPerPage=100, TagsPerPage=100):
+                for resource in page.get("ResourceTagMappingList", []):
+                    tags = resource.get("Tags", [])
+                    for tag in tags:
+                        key = self._normalize_tag_key(tag.get("Key", ""))
+                        value = self._clean_tag_value(tag.get("Value"))
+                        if not key or not value:
+                            continue
+                        if key in PROJECT_NAME_TAG_KEYS:
+                            project_names[value] += 1
+                        if key in PROJECT_OWNER_TAG_KEYS:
+                            project_owners[value] += 1
+        except (ClientError, BotoCoreError):
+            logger.warning(
+                "Unable to read resource tags for Analytics Hub account %s; project metadata will be omitted.",
+                account.key,
+            )
+            return {
+                "project_name": None,
+                "project_owner": None,
+            }
+
+        return {
+            "project_name": self._most_common_tag_value(project_names),
+            "project_owner": self._most_common_tag_value(project_owners),
+        }
+
+    @staticmethod
+    def _normalize_tag_key(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.strip().lower())
+
+    @staticmethod
+    def _clean_tag_value(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if cleaned.lower() in {"-", "n/a", "na", "none", "null", "unknown"}:
+            return None
+        return cleaned
+
+    @staticmethod
+    def _most_common_tag_value(counter: Counter[str]) -> str | None:
+        if not counter:
+            return None
+        highest_count = max(counter.values())
+        candidates = sorted(value for value, count in counter.items() if count == highest_count)
+        return candidates[0] if candidates else None
 
     def _instance_idle_status(
         self,

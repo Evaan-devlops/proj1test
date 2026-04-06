@@ -1,6 +1,17 @@
 const COST_KEYWORDS = ["cost", "spend", "budget", "service", "pricing", "usage"];
 const TREND_KEYWORDS = ["trend", "forecast", "month", "anomaly"];
 const RESOURCE_KEYWORDS = ["resource", "instance", "ec2", "idle", "opensearch", "rds", "s3"];
+const CLARIFICATION_PATTERNS = [
+  "please provide",
+  "please share",
+  "please specify",
+  "i need",
+  "i can help",
+  "you're welcome",
+  "i could not determine",
+  "try asking about",
+  "which aws",
+];
 
 function includesAny(text: string, keywords: string[]) {
   return keywords.some((keyword) => text.includes(keyword));
@@ -13,6 +24,14 @@ function normalizeQuestion(text: string) {
 }
 
 export function buildFollowUpSuggestions(userText: string, assistantText: string): string[] {
+  const normalizedAssistant = assistantText.toLowerCase();
+  if (
+    assistantText.trim().length < 120
+    || CLARIFICATION_PATTERNS.some((pattern) => normalizedAssistant.includes(pattern))
+  ) {
+    return [];
+  }
+
   const source = `${userText} ${assistantText}`.toLowerCase();
 
   if (includesAny(source, RESOURCE_KEYWORDS)) {

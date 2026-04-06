@@ -84,6 +84,8 @@ export type AnalyticsHubAccountSnapshot = {
   account_key: string;
   account_id: string;
   region: string;
+  project_name?: string | null;
+  project_owner?: string | null;
   total_cost_30d: number;
   service_spend_30d: AnalyticsServiceSpendItem[];
   monthly_cost_trend: AnalyticsMonthlyCostItem[];

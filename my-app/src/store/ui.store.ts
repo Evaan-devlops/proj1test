@@ -3,6 +3,12 @@ import { create } from "zustand";
 
 export type AppView = "chat" | "analytics";
 export type AppLayoutMode = "single" | "split" | "float";
+export type DiscussionTableContext = {
+  title: string;
+  headers: string[];
+  rows: string[][];
+  updatedAtMs: number | null;
+};
 
 type UiStore = {
   activeView: AppView;
@@ -15,6 +21,11 @@ type UiStore = {
   openFloatView: (currentView: AppView) => void;
   setSplitRatio: (ratio: number) => void;
   setFloatRatio: (ratio: number) => void;
+  discussionTable: DiscussionTableContext | null;
+  discussionTableWidthRatio: number;
+  openDiscussionTable: (table: DiscussionTableContext) => void;
+  closeDiscussionTable: () => void;
+  setDiscussionTableWidthRatio: (ratio: number) => void;
 
   sidebarOpen: boolean;
   sidebarEverOpened: boolean;
@@ -34,6 +45,8 @@ export const useUiStore = create<UiStore>((set) => ({
   primaryView: "chat",
   splitRatio: 0.5,
   floatRatio: 0.42,
+  discussionTable: null,
+  discussionTableWidthRatio: 0.36,
   openSingleView: (view) =>
     set({
       activeView: view,
@@ -59,6 +72,18 @@ export const useUiStore = create<UiStore>((set) => ({
   setFloatRatio: (ratio) =>
     set({
       floatRatio: Math.max(0.28, Math.min(0.72, ratio)),
+    }),
+  openDiscussionTable: (table) =>
+    set({
+      discussionTable: table,
+    }),
+  closeDiscussionTable: () =>
+    set({
+      discussionTable: null,
+    }),
+  setDiscussionTableWidthRatio: (ratio) =>
+    set({
+      discussionTableWidthRatio: Math.max(0.24, Math.min(0.58, ratio)),
     }),
 
   sidebarOpen: true,
