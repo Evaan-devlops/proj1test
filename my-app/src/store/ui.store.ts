@@ -1,7 +1,12 @@
 //Collapsible left panel (chat history)
 import { create } from "zustand";
 
+export type AppView = "chat" | "analytics";
+
 type UiStore = {
+  activeView: AppView;
+  setActiveView: (view: AppView) => void;
+
   sidebarOpen: boolean;
   sidebarEverOpened: boolean;
   toggleSidebar: () => void;
@@ -13,6 +18,9 @@ type UiStore = {
 };
 
 export const useUiStore = create<UiStore>((set) => ({
+  activeView: "chat",
+  setActiveView: (view) => set({ activeView: view }),
+
   sidebarOpen: true,
   sidebarEverOpened: true,
   toggleSidebar: () =>
