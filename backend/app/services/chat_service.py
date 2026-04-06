@@ -549,7 +549,10 @@ class ChatService:
         prompt = (
             "You are answering questions about AWS analytics.\n"
             "Use the live result as the source of truth. If cached data is present, mention it briefly only when useful.\n"
-            "Be concise, practical, and clear.\n\n"
+            "Be concise, practical, and clear.\n"
+            "When the result contains repeated fields, rankings, lists of services, account rows, or instance rows, "
+            "present that structured data as a markdown table before the short explanation.\n"
+            "Do not wrap markdown tables in code fences.\n\n"
             f"Conversation context:\n{conversation_context or 'No earlier conversation context.'}\n\n"
             f"User question:\n{query_text}\n\n"
             f"Context:\n{self._build_answer_context(tool=tool, query_context=query_context, cached_record=cached_record, live_result=live_result)}\n"
@@ -572,7 +575,9 @@ class ChatService:
         prompt = (
             "You are answering a follow-up question about AWS analytics.\n"
             "Do not request fresh AWS data. Use only the latest session dataset below.\n"
-            "Be concise, practical, and clear.\n\n"
+            "Be concise, practical, and clear.\n"
+            "When the dataset contains rows or comparable fields, present them as a markdown table before the short explanation.\n"
+            "Do not wrap markdown tables in code fences.\n\n"
             f"Conversation context:\n{conversation_context or 'No earlier conversation context.'}\n\n"
             f"Latest session dataset recorded at: {recorded_at_utc or 'unknown time'}\n"
             f"Tool used for that dataset: {tool.tool_name}\n"
@@ -593,11 +598,14 @@ class ChatService:
             accounts = live_result.get("accounts", [])
             if not accounts:
                 return "No configured AWS accounts were found."
-            formatted = ", ".join(
-                f"{item.get('account_key')} ({item.get('account_id')})"
+            rows = [
+                [item.get("account_key", "-"), item.get("account_id", "-"), item.get("region", "-")]
                 for item in accounts
+            ]
+            return (
+                f"{self._markdown_table(['Account', 'Account ID', 'Region'], rows)}\n\n"
+                f"Configured AWS accounts: {', '.join(item.get('account_key', '-') for item in accounts)}."
             )
-            return f"Configured AWS accounts: {formatted}."
 
         succeeded_accounts = live_result.get("succeeded_accounts", [])
         failed_accounts = live_result.get("failed_accounts", [])
@@ -616,53 +624,104 @@ class ChatService:
 
         if tool.tool_name == "cost_breakdown":
             breakdown = data.get("breakdown", [])
-            top_services = ", ".join(
-                f"{item.get('service')} ({item.get('cost')})"
-                for item in breakdown[:3]
-            )
+            rows = [
+                [item.get("service", "-"), item.get("cost", "-"), item.get("percentage", "-")]
+                for item in breakdown[: min(len(breakdown), 5)]
+            ]
             return (
-                f"For account {account_key}, total cost is {data.get('total_cost')}. "
-                f"Top services: {top_services or 'none'}."
+                f"Account `{account_key}` total cost: {data.get('total_cost')}.\n\n"
+                f"{self._markdown_table(['Service', 'Cost', 'Percent'], rows) if rows else 'No service breakdown rows were returned.'}"
             )
 
         if tool.tool_name == "total_cost":
-            return f"For account {account_key}, total cost is {data.get('total_cost')}."
+            service_costs = data.get("service_costs", {})
+            top_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)[:5]
+            rows = [[name, str(cost)] for name, cost in top_services]
+            summary = f"Account `{account_key}` total cost: {data.get('total_cost')}."
+            if not rows:
+                return summary
+            return f"{summary}\n\n{self._markdown_table(['Service', 'Cost'], rows)}"
 
         if tool.tool_name == "service_costs":
             service_costs = data.get("service_costs", {})
-            top_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)[:3]
-            formatted = ", ".join(f"{name} ({cost})" for name, cost in top_services)
-            return f"For account {account_key}, the largest services are {formatted or 'none'}."
+            sorted_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)
+            rows = [[name, str(cost)] for name, cost in sorted_services]
+            return (
+                f"Detailed service costs for account `{account_key}`.\n\n"
+                f"{self._markdown_table(['Service', 'Cost'], rows) if rows else 'No service costs were returned.'}"
+            )
 
         if tool.tool_name == "trends_forecast":
             actual = data.get("actual", [])
+            forecast = data.get("forecast", [])
+            rows = [
+                ["Actual", item.get("month", "-"), item.get("cost", "-")]
+                for item in actual[-6:]
+            ] + [
+                ["Forecast", item.get("month", "-"), item.get("cost", "-")]
+                for item in forecast[:6]
+            ]
             latest_actual = actual[-1] if actual else {}
             return (
-                f"For account {account_key}, the latest actual month is {latest_actual.get('month')} "
-                f"with cost {latest_actual.get('cost')}."
+                f"For account `{account_key}`, the latest actual month is {latest_actual.get('month')} "
+                f"with cost {latest_actual.get('cost')}.\n\n"
+                f"{self._markdown_table(['Series', 'Month', 'Cost'], rows) if rows else 'No trend rows were returned.'}"
             )
 
         if tool.tool_name == "budget":
+            rows = [[
+                data.get("budget_name", "-"),
+                data.get("limit", "-"),
+                data.get("actual_spent", "-"),
+                data.get("utilization_pct", "-"),
+            ]]
             return (
-                f"For account {account_key}, budget {data.get('budget_name')} is at "
-                f"{data.get('utilization_pct')}% utilization."
+                f"Budget status for account `{account_key}`.\n\n"
+                f"{self._markdown_table(['Budget', 'Limit', 'Actual Spent', 'Utilization %'], rows)}"
             )
 
         if tool.tool_name == "resource_cost":
+            rows = [[data.get("resource_id", "-"), data.get("total_cost", "-")]]
             return (
-                f"For account {account_key}, resource {data.get('resource_id')} "
-                f"cost is {data.get('total_cost')}."
+                f"Resource cost for account `{account_key}`.\n\n"
+                f"{self._markdown_table(['Resource ID', 'Total Cost'], rows)}"
             )
 
         if tool.tool_name == "ec2_idle_check":
             instances = data.get("instances", [])
+            rows = [
+                [
+                    item.get("instance_id", "-"),
+                    item.get("cpu_idle", "-"),
+                    item.get("network_idle", "-"),
+                    "Yes" if item.get("idle") else "No",
+                ]
+                for item in instances
+            ]
             idle_instances = [item.get("instance_id") for item in instances if item.get("idle")]
             return (
-                f"For account {account_key}, idle EC2 instances: "
-                f"{', '.join(idle_instances) if idle_instances else 'none'}."
+                f"EC2 idle check for account `{account_key}`.\n\n"
+                f"{self._markdown_table(['Instance ID', 'CPU Idle', 'Network Idle', 'Idle'], rows) if rows else 'No EC2 instance rows were returned.'}\n\n"
+                f"Idle EC2 instances: {', '.join(idle_instances) if idle_instances else 'none'}."
             )
 
         return json.dumps(live_result, ensure_ascii=True)
+
+    def _markdown_table(self, headers: list[str], rows: list[list[Any]]) -> str:
+        if not rows:
+            return ""
+        header_line = "| " + " | ".join(headers) + " |"
+        divider_line = "| " + " | ".join("---" for _ in headers) + " |"
+        body_lines = [
+            "| " + " | ".join(self._markdown_cell(cell) for cell in row) + " |"
+            for row in rows
+        ]
+        return "\n".join([header_line, divider_line, *body_lines])
+
+    def _markdown_cell(self, value: Any) -> str:
+        if value is None:
+            return "-"
+        return str(value).replace("\n", " ").replace("|", "/").strip() or "-"
 
     def _build_answer_context(
         self,

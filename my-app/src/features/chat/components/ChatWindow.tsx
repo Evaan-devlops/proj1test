@@ -1,6 +1,7 @@
 import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useChatStore, type Message } from "src/store/chat.store";
 import { useUiStore } from "src/store/ui.store";
+import { buildFollowUpSuggestions } from "src/features/chat/lib/followUps";
 import TypingDots from "./TypingDots";
 
 const MarkdownMessage = lazy(() => import("./MarkdownMessage"));
@@ -46,6 +47,84 @@ function DownloadIcon() {
   );
 }
 
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1.003 1.003 0 0 0 0-1.42l-2.5-2.5a1.003 1.003 0 0 0-1.42 0l-1.96 1.96 3.75 3.75 2.13-1.79z"
+      />
+    </svg>
+  );
+}
+
+function ThinkingBlock({ text }: { text: string }) {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return (
+    <div className="space-y-3 text-slate-300">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Thinking</div>
+      {lines.length > 0 ? (
+        <div className="space-y-2">
+          {lines.map((line, index) => (
+            <div key={`${line}-${index}`} className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-2 text-sm leading-6 text-slate-300">
+              {line}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <TypingDots />
+    </div>
+  );
+}
+
+function FollowUpActions({
+  suggestions,
+  disabled,
+  onSend,
+  onEdit,
+}: {
+  suggestions: string[];
+  disabled: boolean;
+  onSend: (question: string) => void;
+  onEdit: (question: string) => void;
+}) {
+  if (suggestions.length === 0) return null;
+
+  return (
+    <div className="mt-4 space-y-2">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Follow-up Questions</div>
+      <div className="space-y-2">
+        {suggestions.map((question) => (
+          <div key={question} className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => onSend(question)}
+              className="flex-1 rounded-2xl border border-cyan-300/15 bg-cyan-300/8 px-3 py-2 text-left text-sm text-cyan-50 transition hover:border-cyan-200/35 hover:bg-cyan-300/12 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {question}
+            </button>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => onEdit(question)}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Edit follow-up question"
+              title="Edit before sending"
+            >
+              <EditIcon />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 type Turn = { user: Message; assistant?: Message };
 
 type TurnRowProps = {
@@ -59,6 +138,9 @@ type TurnRowProps = {
   draft: string;
   setDraft: Dispatch<SetStateAction<string>>;
   resendEditedPrompt: (userMessageId: string, newText: string) => void;
+  sendSuggestedPrompt: (text: string) => void;
+  editSuggestedPrompt: (text: string) => void;
+  suggestionsDisabled: boolean;
 };
 
 const TurnRow = memo(function TurnRow({
@@ -72,10 +154,17 @@ const TurnRow = memo(function TurnRow({
   draft,
   setDraft,
   resendEditedPrompt,
+  sendSuggestedPrompt,
+  editSuggestedPrompt,
+  suggestionsDisabled,
 }: TurnRowProps) {
   const user = turn.user;
   const assistant = turn.assistant;
   const isEditing = editingUserId === user.id;
+  const followUps = useMemo(
+    () => (assistant?.status === "final" ? buildFollowUpSuggestions(user.text, assistant.text) : []),
+    [assistant?.status, assistant?.text, user.text],
+  );
 
   async function copyPrompt(text: string, id: string) {
     try {
@@ -191,11 +280,19 @@ const TurnRow = memo(function TurnRow({
             {!assistant ? (
               <TypingDots />
             ) : assistant.status === "streaming" ? (
-              assistant.text ? assistant.text : <TypingDots />
+              <ThinkingBlock text={assistant.text} />
             ) : (
-              <Suspense fallback={<div className="text-white/80">{assistant.text}</div>}>
-                <MarkdownMessage text={assistant.text} />
-              </Suspense>
+              <div>
+                <Suspense fallback={<div className="text-white/80">{assistant.text}</div>}>
+                  <MarkdownMessage text={assistant.text} />
+                </Suspense>
+                <FollowUpActions
+                  suggestions={followUps}
+                  disabled={suggestionsDisabled}
+                  onSend={sendSuggestedPrompt}
+                  onEdit={editSuggestedPrompt}
+                />
+              </div>
             )}
           </div>
 
@@ -236,8 +333,13 @@ export default function ChatWindow() {
   const latestUserMessageIdByChatId = useChatStore((s) => s.latestUserMessageIdByChatId);
   const focusedUserMessageIdByChatId = useChatStore((s) => s.focusedUserMessageIdByChatId);
   const resendEditedPrompt = useChatStore((s) => s.resendEditedPrompt);
+  const sendMessage = useChatStore((s) => s.sendMessage);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
+  const layoutMode = useUiStore((s) => s.layoutMode);
+  const setComposerText = useUiStore((s) => s.setComposerText);
+  const requestComposerFocus = useUiStore((s) => s.requestComposerFocus);
+  const constrainedLayout = layoutMode === "single" && sidebarOpen;
 
   const messages = useMemo(
     () => (activeChatId ? messagesByChatId[activeChatId] ?? [] : []),
@@ -267,6 +369,8 @@ export default function ChatWindow() {
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const turnRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const lastMessage = messages[messages.length - 1];
+  const lastMessageTextLength = lastMessage?.text.length ?? 0;
 
   useEffect(() => {
     if (!resolvedFocusedUserId) return;
@@ -275,9 +379,36 @@ export default function ChatWindow() {
     target.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [resolvedFocusedUserId, turns.length]);
 
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const shouldStickToBottom = isStreaming || lastMessage?.role === "assistant";
+    if (!shouldStickToBottom) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      scroller.scrollTo({
+        top: scroller.scrollHeight,
+        behavior: isStreaming ? "auto" : "smooth",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [isStreaming, turns.length, lastMessage?.id, lastMessage?.status, lastMessageTextLength]);
+
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+
+  function editSuggestedPrompt(text: string) {
+    setComposerText(text);
+    requestComposerFocus();
+  }
+
+  function sendSuggestedPrompt(text: string) {
+    if (isStreaming) return;
+    setComposerText("");
+    void sendMessage(text);
+  }
 
   if (!activeChatId) {
     return (
@@ -297,7 +428,7 @@ export default function ChatWindow() {
 
   return (
     <div ref={scrollerRef} className="flex-1 min-w-0 overflow-y-auto px-4 pb-6">
-      <div className={["mx-auto flex w-full flex-col gap-10 pt-10", sidebarOpen ? "max-w-3xl" : "max-w-5xl"].join(" ")}>
+      <div className={["mx-auto flex w-full flex-col gap-10 pt-10", constrainedLayout ? "max-w-3xl" : "max-w-5xl"].join(" ")}>
         {turns.map((turn) => {
           const user = turn.user;
           const assistant = turn.assistant;
@@ -324,6 +455,9 @@ export default function ChatWindow() {
                 draft={draft}
                 setDraft={setDraft}
                 resendEditedPrompt={resendEditedPrompt}
+                sendSuggestedPrompt={sendSuggestedPrompt}
+                editSuggestedPrompt={editSuggestedPrompt}
+                suggestionsDisabled={isStreaming}
               />
             </div>
           );

@@ -71,6 +71,10 @@ function sortChatsDescending(chats: Chat[]) {
   return [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+function defaultSelectedAccounts(accountKeys: string[]) {
+  return accountKeys.length > 0 ? [accountKeys[0]] : [];
+}
+
 function mapDtoToMessage(dto: ChatMessageDto, statusOverride?: MsgStatus): Message {
   return {
     id: dto.id,
@@ -189,7 +193,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
       set({
         lastError: null,
         availableAccountKeys: fakeAccounts,
-        selectedAccountKeys: fakeAccounts,
+        selectedAccountKeys: defaultSelectedAccounts(fakeAccounts),
         accountsLoaded: true,
       });
       return;
@@ -217,14 +221,18 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     set({
       lastError: null,
       availableAccountKeys: accountKeys,
-      selectedAccountKeys: accountKeys,
+      selectedAccountKeys: defaultSelectedAccounts(accountKeys),
       accountsLoaded: true,
     });
   },
 
   toggleAccountSelection: (accountKey) => {
     set((state) => {
-      const selectedAccountKeys = state.selectedAccountKeys.includes(accountKey)
+      const isSelected = state.selectedAccountKeys.includes(accountKey);
+      if (isSelected && state.selectedAccountKeys.length === 1) {
+        return state;
+      }
+      const selectedAccountKeys = isSelected
         ? state.selectedAccountKeys.filter((key) => key !== accountKey)
         : [...state.selectedAccountKeys, accountKey];
       return { selectedAccountKeys };
@@ -233,7 +241,9 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
 
   toggleAllAccounts: (checked) => {
     set((state) => ({
-      selectedAccountKeys: checked ? [...state.availableAccountKeys] : [],
+      selectedAccountKeys: checked
+        ? [...state.availableAccountKeys]
+        : defaultSelectedAccounts(state.availableAccountKeys),
     }));
   },
 

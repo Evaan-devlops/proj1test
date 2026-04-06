@@ -38,6 +38,10 @@ class Settings:
         "API_RESPONSE_ARCHIVE_FILE",
         f"{app_data_dir}/api_response_archive.jsonl",
     )
+    analytics_hub_snapshot_file: str = os.getenv(
+        "ANALYTICS_HUB_SNAPSHOT_FILE",
+        f"{app_data_dir}/analytics_hub_snapshot.json",
+    )
     chat_recent_limit: int = int(os.getenv("CHAT_RECENT_LIMIT", "10"))
     chat_context_message_limit: int = int(os.getenv("CHAT_CONTEXT_MESSAGE_LIMIT", "6"))
     chat_context_prompt_char_limit: int = int(os.getenv("CHAT_CONTEXT_PROMPT_CHAR_LIMIT", "2500"))

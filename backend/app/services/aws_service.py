@@ -160,6 +160,34 @@ class AwsInsightsService:
             lambda account: self._ec2_idle_worker(account, payload),
         )
 
+    async def build_analytics_hub_snapshot(self) -> dict[str, Any]:
+        accounts = self._resolve_accounts(None)
+        semaphore = asyncio.Semaphore(settings.max_parallel_accounts)
+
+        async def run(account: AwsAccountConfig) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+            async with semaphore:
+                try:
+                    snapshot = await asyncio.to_thread(self._analytics_account_snapshot_worker, account)
+                    return snapshot, None
+                except (ClientError, BotoCoreError, ValueError) as exc:
+                    logger.exception("Analytics Hub snapshot failed for account %s", account.key)
+                    return None, {
+                        "account_key": account.key,
+                        "account_id": account.account_id,
+                        "region": account.region,
+                        "error": str(exc),
+                    }
+
+        results = await asyncio.gather(*(run(account) for account in accounts))
+        snapshots = [item for item, _ in results if item is not None]
+        errors = [error for _, error in results if error is not None]
+        return {
+            "generated_at_utc": datetime.now(UTC).isoformat(),
+            "account_count": len(snapshots),
+            "accounts": snapshots,
+            "errors": errors,
+        }
+
     def _cost_breakdown_worker(
         self,
         account: AwsAccountConfig,
@@ -182,6 +210,34 @@ class AwsInsightsService:
 
     def _service_costs_result(self, account: AwsAccountConfig, days: int) -> dict[str, Any]:
         return {"service_costs": self._service_costs_worker(account, days)}
+
+    def _analytics_account_snapshot_worker(self, account: AwsAccountConfig) -> dict[str, Any]:
+        service_costs = self._service_costs_worker(account, 30)
+        total_cost = round(sum(service_costs.values()), 2)
+        monthly_cost_trend = self._monthly_cost_trend_worker(account, 180)
+        expiring_certificates = self._acm_expiry_worker(account, 90)
+
+        sorted_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)
+        top_service_rows = [
+            {
+                "service": service,
+                "cost": round(cost, 2),
+            }
+            for service, cost in sorted_services[:10]
+        ]
+        other_cost = round(sum(cost for _, cost in sorted_services[10:]), 2)
+        if other_cost > 0:
+            top_service_rows.append({"service": "Other", "cost": other_cost})
+
+        return {
+            "account_key": account.key,
+            "account_id": account.account_id,
+            "region": account.region,
+            "total_cost_30d": total_cost,
+            "service_spend_30d": top_service_rows,
+            "monthly_cost_trend": monthly_cost_trend,
+            "expiring_certificates": expiring_certificates,
+        }
 
     def _trends_forecast_worker(self, account: AwsAccountConfig, days: int) -> dict[str, Any]:
         client = self._client_factory(account).ce()
@@ -222,6 +278,22 @@ class AwsInsightsService:
         anomalies = [item for item in actual if item["cost"] > threshold]
 
         return {"actual": actual, "forecast": forecast, "anomalies": anomalies}
+
+    def _monthly_cost_trend_worker(self, account: AwsAccountConfig, days: int) -> list[dict[str, Any]]:
+        client = self._client_factory(account).ce()
+        start, end = self._date_range(days)
+        cost_response = client.get_cost_and_usage(
+            TimePeriod={"Start": start, "End": end},
+            Granularity=AWS_MONTHLY_GRANULARITY,
+            Metrics=[AWS_COST_METRIC],
+        )
+        return [
+            {
+                "month": item["TimePeriod"]["Start"],
+                "cost": round(float(item["Total"]["UnblendedCost"]["Amount"]), 2),
+            }
+            for item in cost_response["ResultsByTime"]
+        ]
 
     def _budget_worker(self, account: AwsAccountConfig, budget_name: str) -> dict[str, Any]:
         client = self._client_factory(account).budgets()
@@ -282,6 +354,37 @@ class AwsInsightsService:
                 for instance_id in payload.instance_ids
             ]
         }
+
+    def _acm_expiry_worker(self, account: AwsAccountConfig, days: int) -> list[dict[str, Any]]:
+        client = self._client_factory(account).acm()
+        paginator = client.get_paginator("list_certificates")
+        cutoff = datetime.now(UTC) + timedelta(days=days)
+        rows: list[dict[str, Any]] = []
+
+        for page in paginator.paginate(CertificateStatuses=["ISSUED", "PENDING_VALIDATION", "INACTIVE"]):
+            for summary in page.get("CertificateSummaryList", []):
+                certificate_arn = summary.get("CertificateArn")
+                if not certificate_arn:
+                    continue
+                details = client.describe_certificate(CertificateArn=certificate_arn).get("Certificate", {})
+                not_after = details.get("NotAfter")
+                if not isinstance(not_after, datetime):
+                    continue
+                not_after_utc = not_after.astimezone(UTC)
+                if not_after_utc > cutoff:
+                    continue
+                days_to_expiry = max(0, (not_after_utc.date() - datetime.now(UTC).date()).days)
+                rows.append(
+                    {
+                        "certificate_arn": certificate_arn,
+                        "domain_name": details.get("DomainName") or summary.get("DomainName") or "-",
+                        "expiry_date": not_after_utc.date().isoformat(),
+                        "days_to_expiry": days_to_expiry,
+                    }
+                )
+
+        rows.sort(key=lambda item: item["expiry_date"])
+        return rows[:20]
 
     def _instance_idle_status(
         self,

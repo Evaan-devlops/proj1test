@@ -2,10 +2,19 @@
 import { create } from "zustand";
 
 export type AppView = "chat" | "analytics";
+export type AppLayoutMode = "single" | "split" | "float";
 
 type UiStore = {
   activeView: AppView;
-  setActiveView: (view: AppView) => void;
+  layoutMode: AppLayoutMode;
+  primaryView: AppView;
+  splitRatio: number;
+  floatRatio: number;
+  openSingleView: (view: AppView) => void;
+  openSplitView: (currentView: AppView) => void;
+  openFloatView: (currentView: AppView) => void;
+  setSplitRatio: (ratio: number) => void;
+  setFloatRatio: (ratio: number) => void;
 
   sidebarOpen: boolean;
   sidebarEverOpened: boolean;
@@ -13,13 +22,44 @@ type UiStore = {
   setSidebarOpen: (open: boolean) => void;
 
   composerText: string;
+  composerFocusNonce: number;
   setComposerText: (text: string) => void;
   clearComposerText: () => void;
+  requestComposerFocus: () => void;
 };
 
 export const useUiStore = create<UiStore>((set) => ({
   activeView: "chat",
-  setActiveView: (view) => set({ activeView: view }),
+  layoutMode: "single",
+  primaryView: "chat",
+  splitRatio: 0.5,
+  floatRatio: 0.42,
+  openSingleView: (view) =>
+    set({
+      activeView: view,
+      primaryView: view,
+      layoutMode: "single",
+    }),
+  openSplitView: (currentView) =>
+    set({
+      activeView: currentView,
+      primaryView: currentView,
+      layoutMode: "split",
+    }),
+  openFloatView: (currentView) =>
+    set({
+      activeView: currentView,
+      primaryView: currentView,
+      layoutMode: "float",
+    }),
+  setSplitRatio: (ratio) =>
+    set({
+      splitRatio: Math.max(0.3, Math.min(0.7, ratio)),
+    }),
+  setFloatRatio: (ratio) =>
+    set({
+      floatRatio: Math.max(0.28, Math.min(0.72, ratio)),
+    }),
 
   sidebarOpen: true,
   sidebarEverOpened: true,
@@ -38,6 +78,11 @@ export const useUiStore = create<UiStore>((set) => ({
     })),
 
   composerText: "",
+  composerFocusNonce: 0,
   setComposerText: (text) => set({ composerText: text }),
   clearComposerText: () => set({ composerText: "" }),
+  requestComposerFocus: () =>
+    set((state) => ({
+      composerFocusNonce: state.composerFocusNonce + 1,
+    })),
 }));

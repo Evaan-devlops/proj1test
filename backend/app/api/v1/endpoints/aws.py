@@ -5,6 +5,8 @@ from pydantic import BaseModel
 
 from app.schemas.aws import (
     AccountListResponse,
+    AnalyticsHubRefreshResponse,
+    AnalyticsHubSnapshotResponse,
     AwsAccountsRequest,
     BudgetRequest,
     CostBreakdownRequest,
@@ -19,6 +21,10 @@ from app.schemas.aws import (
     ResourceCostRequest,
 )
 from app.services.archive_service import ApiResponseArchiveService
+from app.services.analytics_hub_service import (
+    AnalyticsHubSnapshotService,
+    get_analytics_hub_snapshot_service,
+)
 from app.services.aws_service import AwsInsightsService, get_aws_insights_service
 
 
@@ -67,6 +73,35 @@ async def list_accounts(
     response = AccountListResponse(accounts=service.list_accounts())
     _archive_response(endpoint="/api/v1/aws/accounts", response=response)
     return response
+
+
+@router.get(
+    "/analytics-hub/snapshot",
+    response_model=AnalyticsHubSnapshotResponse,
+    summary="Get the latest stored Analytics Hub snapshot",
+)
+async def analytics_hub_snapshot(
+    service: AnalyticsHubSnapshotService = Depends(get_analytics_hub_snapshot_service),
+) -> AnalyticsHubSnapshotResponse:
+    return AnalyticsHubSnapshotResponse(
+        snapshot=service.get_snapshot(),
+        refresh_in_progress=service.is_refresh_in_progress(),
+    )
+
+
+@router.post(
+    "/analytics-hub/refresh",
+    response_model=AnalyticsHubRefreshResponse,
+    summary="Queue a background refresh for Analytics Hub data",
+)
+async def refresh_analytics_hub_snapshot(
+    service: AnalyticsHubSnapshotService = Depends(get_analytics_hub_snapshot_service),
+) -> AnalyticsHubRefreshResponse:
+    queued = service.queue_refresh()
+    return AnalyticsHubRefreshResponse(
+        queued=queued,
+        refresh_in_progress=service.is_refresh_in_progress(),
+    )
 
 
 @router.post(

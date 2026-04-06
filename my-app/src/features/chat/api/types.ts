@@ -63,6 +63,57 @@ export type AccountListResponse = {
   accounts: AwsAccountDto[];
 };
 
+export type AnalyticsServiceSpendItem = {
+  service: string;
+  cost: number;
+};
+
+export type AnalyticsMonthlyCostItem = {
+  month: string;
+  cost: number;
+};
+
+export type AnalyticsCertificateItem = {
+  certificate_arn: string;
+  domain_name: string;
+  expiry_date: string;
+  days_to_expiry: number;
+};
+
+export type AnalyticsHubAccountSnapshot = {
+  account_key: string;
+  account_id: string;
+  region: string;
+  total_cost_30d: number;
+  service_spend_30d: AnalyticsServiceSpendItem[];
+  monthly_cost_trend: AnalyticsMonthlyCostItem[];
+  expiring_certificates: AnalyticsCertificateItem[];
+};
+
+export type AnalyticsHubAccountError = {
+  account_key: string;
+  account_id?: string | null;
+  region?: string | null;
+  error: string;
+};
+
+export type AnalyticsHubSnapshot = {
+  generated_at_utc?: string | null;
+  account_count: number;
+  accounts: AnalyticsHubAccountSnapshot[];
+  errors: AnalyticsHubAccountError[];
+};
+
+export type AnalyticsHubSnapshotResponse = {
+  snapshot: AnalyticsHubSnapshot;
+  refresh_in_progress: boolean;
+};
+
+export type AnalyticsHubRefreshResponse = {
+  queued: boolean;
+  refresh_in_progress: boolean;
+};
+
 export type ChatStreamRequest = {
   userText: string;
   clientMessageId?: string;

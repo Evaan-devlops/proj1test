@@ -26,3 +26,6 @@ class AwsClientFactory:
 
     def sts(self):
         return self._session.client("sts", region_name=self.account.region)
+
+    def acm(self):
+        return self._session.client("acm", region_name=self.account.region)
