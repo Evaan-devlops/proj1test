@@ -329,6 +329,8 @@ class AnalyticsHubAccountSnapshot(BaseModel):
     account_key: str
     account_id: str
     region: str
+    project_name: str | None = None
+    project_owner: str | None = None
     total_cost_30d: float
     service_spend_30d: list[AnalyticsServiceSpendItem]
     monthly_cost_trend: list[AnalyticsMonthlyCostItem]

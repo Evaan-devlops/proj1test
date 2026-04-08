@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from collections import Counter
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
+from threading import Lock
 from typing import Any, Callable
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -30,13 +33,38 @@ logger = logging.getLogger(__name__)
 
 AWS_COST_METRIC = "UnblendedCost"
 AWS_MONTHLY_GRANULARITY = "MONTHLY"
+PROJECT_NAME_TAG_KEYS = {
+    "application",
+    "applicationname",
+    "app",
+    "product",
+    "productname",
+    "project",
+    "projectname",
+}
+PROJECT_OWNER_TAG_KEYS = {
+    "applicationowner",
+    "businessowner",
+    "contact",
+    "owner",
+    "projectowner",
+    "serviceowner",
+    "team",
+}
 AccountWorker = Callable[[AwsAccountConfig], Any]
+CachedAnalyticsValue = tuple[datetime, Any]
 
 
 class AwsInsightsService:
+    analytics_metadata_cache_ttl = timedelta(hours=6)
+    certificate_expiry_cache_ttl = timedelta(minutes=30)
+
     def __init__(self) -> None:
         self.accounts = settings.get_aws_accounts()
         self._client_factories: dict[str, AwsClientFactory] = {}
+        self._analytics_cache_lock = Lock()
+        self._project_metadata_cache: dict[str, CachedAnalyticsValue] = {}
+        self._certificate_expiry_cache: dict[tuple[str, int], CachedAnalyticsValue] = {}
 
     def _client_factory(self, account: AwsAccountConfig) -> AwsClientFactory:
         factory = self._client_factories.get(account.key)
@@ -216,6 +244,7 @@ class AwsInsightsService:
         total_cost = round(sum(service_costs.values()), 2)
         monthly_cost_trend = self._monthly_cost_trend_worker(account, 180)
         expiring_certificates = self._acm_expiry_worker(account, 90)
+        project_metadata = self._project_metadata_worker(account)
 
         sorted_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)
         top_service_rows = [
@@ -233,6 +262,8 @@ class AwsInsightsService:
             "account_key": account.key,
             "account_id": account.account_id,
             "region": account.region,
+            "project_name": project_metadata["project_name"],
+            "project_owner": project_metadata["project_owner"],
             "total_cost_30d": total_cost,
             "service_spend_30d": top_service_rows,
             "monthly_cost_trend": monthly_cost_trend,
@@ -356,9 +387,19 @@ class AwsInsightsService:
         }
 
     def _acm_expiry_worker(self, account: AwsAccountConfig, days: int) -> list[dict[str, Any]]:
+        cache_key = (account.key, days)
+        cached_rows = self._get_cached_analytics_value(
+            self._certificate_expiry_cache,
+            cache_key,
+            self.certificate_expiry_cache_ttl,
+        )
+        if cached_rows is not None:
+            return cached_rows
+
         client = self._client_factory(account).acm()
         paginator = client.get_paginator("list_certificates")
-        cutoff = datetime.now(UTC) + timedelta(days=days)
+        now_utc = datetime.now(UTC)
+        cutoff = now_utc + timedelta(days=days)
         rows: list[dict[str, Any]] = []
 
         for page in paginator.paginate(CertificateStatuses=["ISSUED", "PENDING_VALIDATION", "INACTIVE"]):
@@ -373,7 +414,7 @@ class AwsInsightsService:
                 not_after_utc = not_after.astimezone(UTC)
                 if not_after_utc > cutoff:
                     continue
-                days_to_expiry = max(0, (not_after_utc.date() - datetime.now(UTC).date()).days)
+                days_to_expiry = max(0, (not_after_utc.date() - now_utc.date()).days)
                 rows.append(
                     {
                         "certificate_arn": certificate_arn,
@@ -384,7 +425,101 @@ class AwsInsightsService:
                 )
 
         rows.sort(key=lambda item: item["expiry_date"])
-        return rows[:20]
+        trimmed_rows = rows[:20]
+        self._set_cached_analytics_value(self._certificate_expiry_cache, cache_key, trimmed_rows)
+        return trimmed_rows
+
+    def _project_metadata_worker(self, account: AwsAccountConfig) -> dict[str, str | None]:
+        cached_metadata = self._get_cached_analytics_value(
+            self._project_metadata_cache,
+            account.key,
+            self.analytics_metadata_cache_ttl,
+        )
+        if cached_metadata is not None:
+            return cached_metadata
+
+        try:
+            client = self._client_factory(account).tagging()
+            paginator = client.get_paginator("get_resources")
+            project_names: Counter[str] = Counter()
+            project_owners: Counter[str] = Counter()
+
+            for page in paginator.paginate(ResourcesPerPage=100, TagsPerPage=100):
+                for resource in page.get("ResourceTagMappingList", []):
+                    tags = resource.get("Tags", [])
+                    for tag in tags:
+                        key = self._normalize_tag_key(tag.get("Key", ""))
+                        value = self._clean_tag_value(tag.get("Value"))
+                        if not key or not value:
+                            continue
+                        if key in PROJECT_NAME_TAG_KEYS:
+                            project_names[value] += 1
+                        if key in PROJECT_OWNER_TAG_KEYS:
+                            project_owners[value] += 1
+        except (ClientError, BotoCoreError):
+            logger.warning(
+                "Unable to read resource tags for Analytics Hub account %s; project metadata will be omitted.",
+                account.key,
+            )
+            return {
+                "project_name": None,
+                "project_owner": None,
+            }
+
+        metadata = {
+            "project_name": self._most_common_tag_value(project_names),
+            "project_owner": self._most_common_tag_value(project_owners),
+        }
+        self._set_cached_analytics_value(self._project_metadata_cache, account.key, metadata)
+        return metadata
+
+    def _get_cached_analytics_value(
+        self,
+        cache: dict[Any, CachedAnalyticsValue],
+        key: Any,
+        ttl: timedelta,
+    ) -> Any | None:
+        with self._analytics_cache_lock:
+            cached_item = cache.get(key)
+            if cached_item is None:
+                return None
+            cached_at, value = cached_item
+            if datetime.now(UTC) - cached_at > ttl:
+                cache.pop(key, None)
+                return None
+            return value
+
+    def _set_cached_analytics_value(
+        self,
+        cache: dict[Any, CachedAnalyticsValue],
+        key: Any,
+        value: Any,
+    ) -> None:
+        with self._analytics_cache_lock:
+            cache[key] = (datetime.now(UTC), value)
+
+    @staticmethod
+    def _normalize_tag_key(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.strip().lower())
+
+    @staticmethod
+    def _clean_tag_value(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if cleaned.lower() in {"-", "n/a", "na", "none", "null", "unknown"}:
+            return None
+        return cleaned
+
+    @staticmethod
+    def _most_common_tag_value(counter: Counter[str]) -> str | None:
+        if not counter:
+            return None
+        highest_count = max(counter.values())
+        candidates = sorted(value for value, count in counter.items() if count == highest_count)
+        return candidates[0] if candidates else None
 
     def _instance_idle_status(
         self,

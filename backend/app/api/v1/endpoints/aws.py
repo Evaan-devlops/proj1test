@@ -20,7 +20,7 @@ from app.schemas.aws import (
     MultiAccountTrendsResponse,
     ResourceCostRequest,
 )
-from app.services.archive_service import ApiResponseArchiveService
+from app.services.archive_service import ApiResponseArchiveService, get_api_response_archive_service
 from app.services.analytics_hub_service import (
     AnalyticsHubSnapshotService,
     get_analytics_hub_snapshot_service,
@@ -29,7 +29,6 @@ from app.services.aws_service import AwsInsightsService, get_aws_insights_servic
 
 
 router = APIRouter()
-archive_service = ApiResponseArchiveService()
 TResponseModel = TypeVar("TResponseModel", bound=BaseModel)
 
 
@@ -37,6 +36,7 @@ def _archive_response(
     *,
     endpoint: str,
     response: BaseModel,
+    archive_service: ApiResponseArchiveService,
     request_payload: BaseModel | None = None,
 ) -> None:
     archive_service.append_record(
@@ -52,10 +52,12 @@ def _validate_and_archive_response(
     response_model: type[TResponseModel],
     service_response: dict,
     request_payload: BaseModel,
+    archive_service: ApiResponseArchiveService,
 ) -> TResponseModel:
     response = response_model.model_validate(service_response)
     _archive_response(
         endpoint=endpoint,
+        archive_service=archive_service,
         request_payload=request_payload,
         response=response,
     )
@@ -69,9 +71,14 @@ def _validate_and_archive_response(
 )
 async def list_accounts(
     service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
 ) -> AccountListResponse:
     response = AccountListResponse(accounts=service.list_accounts())
-    _archive_response(endpoint="/api/v1/aws/accounts", response=response)
+    _archive_response(
+        endpoint="/api/v1/aws/accounts",
+        response=response,
+        archive_service=archive_service,
+    )
     return response
 
 
@@ -116,12 +123,14 @@ async def refresh_analytics_hub_snapshot(
 async def cost_breakdown(
     payload: CostBreakdownRequest,
     service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
 ) -> MultiAccountCostBreakdownResponse:
     return _validate_and_archive_response(
         endpoint="/api/v1/aws/cost-breakdown",
         response_model=MultiAccountCostBreakdownResponse,
         service_response=await service.get_cost_breakdown(payload),
         request_payload=payload,
+        archive_service=archive_service,
     )
 
 
@@ -133,12 +142,14 @@ async def cost_breakdown(
 async def total_cost(
     payload: AwsAccountsRequest,
     service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
 ) -> MultiAccountTotalCostResponse:
     return _validate_and_archive_response(
         endpoint="/api/v1/aws/total-cost",
         response_model=MultiAccountTotalCostResponse,
         service_response=await service.get_total_cost(payload),
         request_payload=payload,
+        archive_service=archive_service,
     )
 
 
@@ -150,12 +161,14 @@ async def total_cost(
 async def service_costs(
     payload: AwsAccountsRequest,
     service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
 ) -> MultiAccountServiceCostResponse:
     return _validate_and_archive_response(
         endpoint="/api/v1/aws/service-costs",
         response_model=MultiAccountServiceCostResponse,
         service_response=await service.get_service_costs(payload),
         request_payload=payload,
+        archive_service=archive_service,
     )
 
 
@@ -167,12 +180,14 @@ async def service_costs(
 async def trends_forecast(
     payload: AwsAccountsRequest,
     service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
 ) -> MultiAccountTrendsResponse:
     return _validate_and_archive_response(
         endpoint="/api/v1/aws/trends-forecast",
         response_model=MultiAccountTrendsResponse,
         service_response=await service.get_trends_and_forecast(payload),
         request_payload=payload,
+        archive_service=archive_service,
     )
 
 
@@ -184,12 +199,14 @@ async def trends_forecast(
 async def budget(
     payload: BudgetRequest,
     service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
 ) -> MultiAccountBudgetResponse:
     return _validate_and_archive_response(
         endpoint="/api/v1/aws/budget",
         response_model=MultiAccountBudgetResponse,
         service_response=await service.get_budget(payload),
         request_payload=payload,
+        archive_service=archive_service,
     )
 
 
@@ -201,12 +218,14 @@ async def budget(
 async def resource_cost(
     payload: ResourceCostRequest,
     service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
 ) -> MultiAccountResourceCostResponse:
     return _validate_and_archive_response(
         endpoint="/api/v1/aws/resource-cost",
         response_model=MultiAccountResourceCostResponse,
         service_response=await service.get_resource_cost(payload),
         request_payload=payload,
+        archive_service=archive_service,
     )
 
 
@@ -218,10 +237,12 @@ async def resource_cost(
 async def ec2_idle_check(
     payload: Ec2IdleRequest,
     service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
 ) -> MultiAccountIdleResponse:
     return _validate_and_archive_response(
         endpoint="/api/v1/aws/ec2/idle-check",
         response_model=MultiAccountIdleResponse,
         service_response=await service.get_ec2_idle_status(payload),
         request_payload=payload,
+        archive_service=archive_service,
     )
