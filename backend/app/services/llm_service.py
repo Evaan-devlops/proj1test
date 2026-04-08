@@ -35,6 +35,9 @@ class LlmService:
     def __init__(self) -> None:
         self._token_payload: TokenPayload | None = None
         self._token_lock = asyncio.Lock()
+        self._client_lock = asyncio.Lock()
+        self._token_client: httpx.AsyncClient | None = None
+        self._llm_client: httpx.AsyncClient | None = None
 
     async def answer_question(self, payload: LlmAnswerRequest) -> LlmAnswerResponse:
         self._validate_settings()
@@ -162,17 +165,15 @@ class LlmService:
 
     async def _request_access_token(self) -> tuple[dict[str, Any], int]:
         try:
-            async with httpx.AsyncClient(
-                timeout=settings.token_request_timeout_seconds
-            ) as client:
-                response = await client.post(
-                    settings.token_url,
-                    auth=(settings.vox_user, settings.vox_password),
-                    headers={"Accept": "application/json"},
-                    data=self._token_request_data(),
-                )
-                response.raise_for_status()
-                return response.json(), response.status_code
+            client = await self._get_token_client()
+            response = await client.post(
+                settings.token_url,
+                auth=(settings.vox_user, settings.vox_password),
+                headers={"Accept": "application/json"},
+                data=self._token_request_data(),
+            )
+            response.raise_for_status()
+            return response.json(), response.status_code
         except httpx.TimeoutException as exc:
             logger.exception("Token generation timed out")
             raise HTTPException(
@@ -230,23 +231,21 @@ class LlmService:
         }
 
         try:
-            async with httpx.AsyncClient(
-                timeout=settings.llm_request_timeout_seconds
-            ) as client:
-                response = await client.post(
-                    settings.vessel_openai_api,
-                    headers=headers,
-                    json=payload,
-                )
-                response.raise_for_status()
-                return {
-                    "body": response.json(),
-                    "status_code": response.status_code,
-                    "request_payload": payload,
-                    "request_id": response.headers.get("x-request-id")
-                    or response.headers.get("request-id")
-                    or response.headers.get("x-correlation-id"),
-                }
+            client = await self._get_llm_client()
+            response = await client.post(
+                settings.vessel_openai_api,
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            return {
+                "body": response.json(),
+                "status_code": response.status_code,
+                "request_payload": payload,
+                "request_id": response.headers.get("x-request-id")
+                or response.headers.get("request-id")
+                or response.headers.get("x-correlation-id"),
+            }
         except httpx.TimeoutException as exc:
             logger.exception("LLM request timed out")
             raise HTTPException(
@@ -303,6 +302,30 @@ class LlmService:
         if query.get("grant_type"):
             return None
         return {"grant_type": "client_credentials"}
+
+    async def _get_token_client(self) -> httpx.AsyncClient:
+        client = self._token_client
+        if client is not None:
+            return client
+
+        async with self._client_lock:
+            if self._token_client is None:
+                self._token_client = httpx.AsyncClient(
+                    timeout=settings.token_request_timeout_seconds
+                )
+            return self._token_client
+
+    async def _get_llm_client(self) -> httpx.AsyncClient:
+        client = self._llm_client
+        if client is not None:
+            return client
+
+        async with self._client_lock:
+            if self._llm_client is None:
+                self._llm_client = httpx.AsyncClient(
+                    timeout=settings.llm_request_timeout_seconds
+                )
+            return self._llm_client
 
     def _build_token_payload(
         self,

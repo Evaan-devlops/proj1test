@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from dataclasses import replace
 from collections import Counter
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
+from threading import Lock
 from typing import Any, Callable
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -51,12 +52,19 @@ PROJECT_OWNER_TAG_KEYS = {
     "team",
 }
 AccountWorker = Callable[[AwsAccountConfig], Any]
+CachedAnalyticsValue = tuple[datetime, Any]
 
 
 class AwsInsightsService:
+    analytics_metadata_cache_ttl = timedelta(hours=6)
+    certificate_expiry_cache_ttl = timedelta(minutes=30)
+
     def __init__(self) -> None:
         self.accounts = settings.get_aws_accounts()
         self._client_factories: dict[str, AwsClientFactory] = {}
+        self._analytics_cache_lock = Lock()
+        self._project_metadata_cache: dict[str, CachedAnalyticsValue] = {}
+        self._certificate_expiry_cache: dict[tuple[str, int], CachedAnalyticsValue] = {}
 
     def _client_factory(self, account: AwsAccountConfig) -> AwsClientFactory:
         factory = self._client_factories.get(account.key)
@@ -379,9 +387,19 @@ class AwsInsightsService:
         }
 
     def _acm_expiry_worker(self, account: AwsAccountConfig, days: int) -> list[dict[str, Any]]:
+        cache_key = (account.key, days)
+        cached_rows = self._get_cached_analytics_value(
+            self._certificate_expiry_cache,
+            cache_key,
+            self.certificate_expiry_cache_ttl,
+        )
+        if cached_rows is not None:
+            return cached_rows
+
         client = self._client_factory(account).acm()
         paginator = client.get_paginator("list_certificates")
-        cutoff = datetime.now(UTC) + timedelta(days=days)
+        now_utc = datetime.now(UTC)
+        cutoff = now_utc + timedelta(days=days)
         rows: list[dict[str, Any]] = []
 
         for page in paginator.paginate(CertificateStatuses=["ISSUED", "PENDING_VALIDATION", "INACTIVE"]):
@@ -396,7 +414,7 @@ class AwsInsightsService:
                 not_after_utc = not_after.astimezone(UTC)
                 if not_after_utc > cutoff:
                     continue
-                days_to_expiry = max(0, (not_after_utc.date() - datetime.now(UTC).date()).days)
+                days_to_expiry = max(0, (not_after_utc.date() - now_utc.date()).days)
                 rows.append(
                     {
                         "certificate_arn": certificate_arn,
@@ -407,9 +425,19 @@ class AwsInsightsService:
                 )
 
         rows.sort(key=lambda item: item["expiry_date"])
-        return rows[:20]
+        trimmed_rows = rows[:20]
+        self._set_cached_analytics_value(self._certificate_expiry_cache, cache_key, trimmed_rows)
+        return trimmed_rows
 
     def _project_metadata_worker(self, account: AwsAccountConfig) -> dict[str, str | None]:
+        cached_metadata = self._get_cached_analytics_value(
+            self._project_metadata_cache,
+            account.key,
+            self.analytics_metadata_cache_ttl,
+        )
+        if cached_metadata is not None:
+            return cached_metadata
+
         try:
             client = self._client_factory(account).tagging()
             paginator = client.get_paginator("get_resources")
@@ -438,10 +466,37 @@ class AwsInsightsService:
                 "project_owner": None,
             }
 
-        return {
+        metadata = {
             "project_name": self._most_common_tag_value(project_names),
             "project_owner": self._most_common_tag_value(project_owners),
         }
+        self._set_cached_analytics_value(self._project_metadata_cache, account.key, metadata)
+        return metadata
+
+    def _get_cached_analytics_value(
+        self,
+        cache: dict[Any, CachedAnalyticsValue],
+        key: Any,
+        ttl: timedelta,
+    ) -> Any | None:
+        with self._analytics_cache_lock:
+            cached_item = cache.get(key)
+            if cached_item is None:
+                return None
+            cached_at, value = cached_item
+            if datetime.now(UTC) - cached_at > ttl:
+                cache.pop(key, None)
+                return None
+            return value
+
+    def _set_cached_analytics_value(
+        self,
+        cache: dict[Any, CachedAnalyticsValue],
+        key: Any,
+        value: Any,
+    ) -> None:
+        with self._analytics_cache_lock:
+            cache[key] = (datetime.now(UTC), value)
 
     @staticmethod
     def _normalize_tag_key(value: str) -> str:

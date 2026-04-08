@@ -4,6 +4,8 @@ import json
 from collections import defaultdict, deque
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from functools import lru_cache
+from pathlib import Path
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -29,6 +31,7 @@ class ApiResponseArchiveService:
         )
         self.archive_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
+        self._records = self._read_records_from_disk()
 
     def append_record(
         self,
@@ -64,13 +67,13 @@ class ApiResponseArchiveService:
         }
 
         with self._lock:
-            records = self._load_existing_records()
-            records.append(record)
-            retained_records = self._retain_recent_records(records)
+            self._records.append(record)
+            retained_records = self._retain_recent_records(self._records)
+            self._records = retained_records
             self._write_records(retained_records)
         return record
 
-    def _load_existing_records(self) -> list[dict[str, Any]]:
+    def _read_records_from_disk(self) -> list[dict[str, Any]]:
         if not self.archive_path.exists():
             return []
 
@@ -80,7 +83,10 @@ class ApiResponseArchiveService:
                 stripped_line = line.strip()
                 if not stripped_line:
                     continue
-                records.append(json.loads(stripped_line))
+                try:
+                    records.append(json.loads(stripped_line))
+                except json.JSONDecodeError:
+                    continue
         return records
 
     def list_recent_records(
@@ -89,14 +95,14 @@ class ApiResponseArchiveService:
         endpoint: str,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        records = self._load_existing_records()
-        matched_records = [
-            record
-            for record in records
-            if record.get("endpoint") == endpoint
-        ]
+        with self._lock:
+            matched_records = [
+                record
+                for record in self._records
+                if record.get("endpoint") == endpoint
+            ]
         if limit is None or limit <= 0:
-            return matched_records
+            return list(matched_records)
         return matched_records[-limit:]
 
     def _retain_recent_records(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -122,7 +128,8 @@ class ApiResponseArchiveService:
         ]
 
     def _write_records(self, records: list[dict[str, Any]]) -> None:
-        with self.archive_path.open("w", encoding="utf-8") as archive_file:
+        temp_path = self.archive_path.with_suffix(f"{self.archive_path.suffix}.tmp")
+        with temp_path.open("w", encoding="utf-8", newline="\n") as archive_file:
             for record in records:
                 archive_file.write(
                     json.dumps(
@@ -133,6 +140,7 @@ class ApiResponseArchiveService:
                     )
                 )
                 archive_file.write("\n")
+        Path(temp_path).replace(self.archive_path)
 
     def _normalize_request_payload(self, request_payload: dict[str, Any] | None) -> dict[str, Any]:
         if not request_payload:
@@ -399,3 +407,8 @@ class ApiResponseArchiveService:
             reverse=True,
         )
         return ", ".join(f"{key}={round(value, 2)}" for key, value in sorted_items[:top_n])
+
+
+@lru_cache(maxsize=1)
+def get_api_response_archive_service() -> ApiResponseArchiveService:
+    return ApiResponseArchiveService()

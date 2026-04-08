@@ -17,7 +17,7 @@ from app.schemas.chat import (
     RenameChatResponse,
     RerunStreamRequest,
 )
-from app.services.archive_service import ApiResponseArchiveService
+from app.services.archive_service import ApiResponseArchiveService, get_api_response_archive_service
 from app.services.aws_service import AwsInsightsService, get_aws_insights_service
 from app.services.chat_service import ChatService
 from app.services.chat_store_service import ChatStoreService, get_chat_store_service
@@ -31,12 +31,13 @@ def get_chat_service(
     chat_store: ChatStoreService = Depends(get_chat_store_service),
     aws_service: AwsInsightsService = Depends(get_aws_insights_service),
     llm_service: LlmService = Depends(get_llm_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
 ) -> ChatService:
     return ChatService(
         chat_store=chat_store,
         aws_service=aws_service,
         llm_service=llm_service,
-        archive_service=ApiResponseArchiveService(),
+        archive_service=archive_service,
     )
 
 
