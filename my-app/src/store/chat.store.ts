@@ -1,6 +1,7 @@
 // src/store/chat.store.ts
 import { chatApi } from "src/features/chat/api/chatApi";
 import type { ChatMessageDto, StreamEvent } from "src/features/chat/api/types";
+import type { ApiStreamResult } from "src/lib/http";
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 
@@ -58,6 +59,18 @@ export type ChatStore = {
 
 type SetFn = Parameters<StateCreator<ChatStore>>[0];
 type GetFn = Parameters<StateCreator<ChatStore>>[1];
+type StreamSuccessResult = Extract<ApiStreamResult, { ok: true }>;
+type StartStreamEvent = Extract<StreamEvent, { type: "start" }>;
+type StreamCopy = {
+  invalidStartMessage: string;
+  errorPrefix: string;
+  unexpectedEndMessage: string;
+  unexpectedEndFallbackText: string;
+  requestFailedMessage: string;
+  requestFailedFallbackText: string;
+};
+
+const EMPTY_MESSAGES: Message[] = [];
 
 function genId(prefix: string) {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
@@ -109,6 +122,192 @@ function parseStreamEvent(chunk: string): StreamEvent | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function createIdleStreamState(): Pick<ChatStore, "isStreaming" | "activeStreamChatId" | "streamCancel" | "streamTimerId"> {
+  return {
+    isStreaming: false,
+    activeStreamChatId: null,
+    streamCancel: null,
+    streamTimerId: null,
+  };
+}
+
+function getChatMessages(state: Pick<ChatStore, "messagesByChatId">, chatId: string): Message[] {
+  return state.messagesByChatId[chatId] ?? EMPTY_MESSAGES;
+}
+
+function replaceChatMessages(
+  state: Pick<ChatStore, "messagesByChatId">,
+  chatId: string,
+  messages: Message[],
+): Pick<ChatStore, "messagesByChatId"> {
+  return {
+    messagesByChatId: { ...state.messagesByChatId, [chatId]: messages },
+  };
+}
+
+function findAssistantMessageIndex(messages: Message[], messageId?: string): number {
+  if (messageId) {
+    return messages.findIndex((message) => message.id === messageId && message.role === "assistant");
+  }
+  return messages.findIndex((message) => message.role === "assistant" && message.status === "streaming");
+}
+
+function updateAssistantMessage(
+  state: ChatStore,
+  chatId: string,
+  options: {
+    messageId?: string;
+    updater: (message: Message) => Message;
+  },
+): Pick<ChatStore, "messagesByChatId"> | null {
+  const messages = getChatMessages(state, chatId);
+  const assistantIndex = findAssistantMessageIndex(messages, options.messageId);
+  if (assistantIndex === -1) {
+    return null;
+  }
+
+  const nextMessages = [...messages];
+  nextMessages[assistantIndex] = options.updater(nextMessages[assistantIndex]);
+  return replaceChatMessages(state, chatId, nextMessages);
+}
+
+function touchChat(chats: Chat[], chatId: string, updatedAt: number, titleHint?: string): Chat[] {
+  return sortChatsDescending(
+    chats.map((chat) =>
+      chat.id === chatId
+        ? {
+            ...chat,
+            updatedAt,
+            title: titleHint && chat.title === "New chat" ? titleHint : chat.title,
+          }
+        : chat,
+    ),
+  );
+}
+
+function buildStreamFailureState(
+  state: ChatStore,
+  chatId: string,
+  details: {
+    lastError: string;
+    fallbackText: string;
+  },
+): Partial<ChatStore> {
+  const assistantUpdate = updateAssistantMessage(state, chatId, {
+    updater: (message) => ({
+      ...message,
+      status: "error" as MsgStatus,
+      text: message.text || details.fallbackText,
+    }),
+  });
+
+  return assistantUpdate
+    ? { lastError: details.lastError, ...assistantUpdate, ...createIdleStreamState() }
+    : { lastError: details.lastError, ...createIdleStreamState() };
+}
+
+async function consumeAssistantStream(args: {
+  chatId: string;
+  response: StreamSuccessResult;
+  set: SetFn;
+  get: GetFn;
+  copy: StreamCopy;
+  onStart: (state: ChatStore, event: StartStreamEvent) => Partial<ChatStore>;
+}): Promise<boolean> {
+  const { chatId, response, set, get, copy, onStart } = args;
+  set({ streamCancel: response.cancel });
+
+  try {
+    let completed = false;
+
+    for await (const chunk of response.stream) {
+      const evt = parseStreamEvent(chunk);
+      if (!evt) continue;
+
+      if (evt.type === "start") {
+        if (!isRecord(evt.userMessage) || !isRecord(evt.assistantMessage)) {
+          set({ lastError: copy.invalidStartMessage });
+          continue;
+        }
+        set((state) => ({
+          lastError: null,
+          ...onStart(state, evt),
+        }));
+        continue;
+      }
+
+      if (evt.type === "delta") {
+        set((state) => {
+          const assistantUpdate = updateAssistantMessage(state, chatId, {
+            messageId: evt.messageId,
+            updater: (message) => ({
+              ...message,
+              text: message.text + evt.text,
+              status: "streaming" as MsgStatus,
+            }),
+          });
+          return assistantUpdate ?? {};
+        });
+        continue;
+      }
+
+      if (evt.type === "final") {
+        completed = true;
+        set((state) => {
+          const assistantUpdate = updateAssistantMessage(state, chatId, {
+            messageId: evt.messageId,
+            updater: (message) => ({
+              ...message,
+              status: "final" as MsgStatus,
+              text: evt.fullText ?? message.text,
+            }),
+          });
+          return assistantUpdate
+            ? { lastError: null, ...assistantUpdate, ...createIdleStreamState() }
+            : createIdleStreamState();
+        });
+        break;
+      }
+
+      if (evt.type === "error") {
+        set((state) =>
+          buildStreamFailureState(state, chatId, {
+            lastError: `${copy.errorPrefix}${evt.message}`,
+            fallbackText: `[Error: ${evt.message}]`,
+          }),
+        );
+        return false;
+      }
+    }
+
+    if (!completed) {
+      if (get().activeStreamChatId !== chatId || !get().isStreaming) {
+        return true;
+      }
+      set((state) =>
+        buildStreamFailureState(state, chatId, {
+          lastError: copy.unexpectedEndMessage,
+          fallbackText: copy.unexpectedEndFallbackText,
+        }),
+      );
+      return false;
+    }
+  } catch {
+    if (get().activeStreamChatId !== chatId || !get().isStreaming) {
+      return true;
+    }
+    set((state) =>
+      buildStreamFailureState(state, chatId, {
+        lastError: copy.requestFailedMessage,
+        fallbackText: copy.requestFailedFallbackText,
+      }),
+    );
+    return false;
+  }
+
+  return true;
 }
 
 async function ensureActiveChatId(get: GetFn): Promise<string | null> {
@@ -493,13 +692,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
         },
         latestUserMessageIdByChatId: { ...state.latestUserMessageIdByChatId, [chatId]: userMsg.id },
         focusedUserMessageIdByChatId: { ...state.focusedUserMessageIdByChatId, [chatId]: userMsg.id },
-        chats: sortChatsDescending(
-          state.chats.map((c) =>
-            c.id === chatId
-              ? { ...c, updatedAt: now, title: c.title === "New chat" ? title || c.title : c.title }
-              : c
-          )
-        ),
+        chats: touchChat(state.chats, chatId, now, title),
         lastError: null,
         isStreaming: true,
         activeStreamChatId: chatId,
@@ -536,13 +729,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
       },
       latestUserMessageIdByChatId: { ...state.latestUserMessageIdByChatId, [chatId]: tempUserId },
       focusedUserMessageIdByChatId: { ...state.focusedUserMessageIdByChatId, [chatId]: tempUserId },
-      chats: sortChatsDescending(
-        state.chats.map((c) =>
-          c.id === chatId
-            ? { ...c, updatedAt: now, title: c.title === "New chat" ? title || c.title : c.title }
-            : c
-        )
-      ),
+      chats: touchChat(state.chats, chatId, now, title),
       lastError: null,
       isStreaming: true,
       activeStreamChatId: chatId,
@@ -556,199 +743,41 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     });
     if (!response.ok) {
       set((state) => {
-        const msgs = state.messagesByChatId[chatId] ?? [];
-        const last = msgs[msgs.length - 1];
-        if (!last || last.role !== "assistant") {
-          return { isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null };
-        }
-        const updated = {
-          ...last,
-          status: "error" as MsgStatus,
-          text: last.text || `[Error: ${response.error.message}]`,
-        };
-        return {
+        const failureState = buildStreamFailureState(state, chatId, {
           lastError: `Unable to send the message. ${response.error.message}`,
-          messagesByChatId: { ...state.messagesByChatId, [chatId]: [...msgs.slice(0, -1), updated] },
-          isStreaming: false,
-          activeStreamChatId: null,
-          streamCancel: null,
-          streamTimerId: null,
-        };
-      });
-      return false;
-    }
-
-    set({ streamCancel: response.cancel });
-
-    try {
-      let completed = false;
-      for await (const chunk of response.stream) {
-        const evt = parseStreamEvent(chunk);
-        if (!evt) continue;
-
-        if (evt.type === "start") {
-          if (!isRecord(evt.userMessage) || !isRecord(evt.assistantMessage)) {
-            set({ lastError: "Chat stream started with an unexpected payload." });
-            continue;
-          }
-          set((state) => {
-            const msgs = state.messagesByChatId[chatId] ?? [];
-            const base = msgs.slice(0, -2);
-            const userMsg = mapDtoToMessage(evt.userMessage, "final");
-            const assistantMsg = mapDtoToMessage(evt.assistantMessage, "streaming");
-            return {
-              lastError: null,
-              messagesByChatId: {
-                ...state.messagesByChatId,
-                [chatId]: [...base, userMsg, assistantMsg],
-              },
-              latestUserMessageIdByChatId: { ...state.latestUserMessageIdByChatId, [chatId]: userMsg.id },
-              focusedUserMessageIdByChatId: { ...state.focusedUserMessageIdByChatId, [chatId]: userMsg.id },
-            };
-          });
-          continue;
-        }
-
-        if (evt.type === "delta") {
-          set((state) => {
-            const msgs = state.messagesByChatId[chatId] ?? [];
-            const idx = msgs.findIndex((m) => m.id === evt.messageId);
-            if (idx === -1) return {};
-            const m = msgs[idx];
-            if (m.role !== "assistant") return {};
-            const updated = { ...m, text: m.text + evt.text, status: "streaming" as MsgStatus };
-            const next = [...msgs];
-            next[idx] = updated;
-            return { messagesByChatId: { ...state.messagesByChatId, [chatId]: next } };
-          });
-          continue;
-        }
-
-        if (evt.type === "final") {
-          completed = true;
-          set((state) => {
-            const msgs = state.messagesByChatId[chatId] ?? [];
-            const idx = msgs.findIndex((m) => m.id === evt.messageId);
-            if (idx === -1) {
-              return { isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null };
-            }
-            const m = msgs[idx];
-            if (m.role !== "assistant") {
-              return { isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null };
-            }
-            const updated = { ...m, status: "final" as MsgStatus, text: evt.fullText ?? m.text };
-            const next = [...msgs];
-            next[idx] = updated;
-            return {
-              lastError: null,
-              messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-              isStreaming: false,
-              activeStreamChatId: null,
-              streamCancel: null,
-              streamTimerId: null,
-            };
-          });
-          break;
-        }
-
-        if (evt.type === "error") {
-          set((state) => {
-            const msgs = state.messagesByChatId[chatId] ?? [];
-            const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
-            if (idx === -1) {
-              return {
-                lastError: `Chat failed. ${evt.message}`,
-                isStreaming: false,
-                activeStreamChatId: null,
-                streamCancel: null,
-                streamTimerId: null,
-              };
-            }
-            const next = [...msgs];
-            next[idx] = {
-              ...next[idx],
-              status: "error" as MsgStatus,
-              text: next[idx].text || `[Error: ${evt.message}]`,
-            };
-            return {
-              lastError: `Chat failed. ${evt.message}`,
-              messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-              isStreaming: false,
-              activeStreamChatId: null,
-              streamCancel: null,
-              streamTimerId: null,
-            };
-          });
-          return false;
-        }
-      }
-      if (!completed) {
-        if (get().activeStreamChatId !== chatId || !get().isStreaming) {
-          return true;
-        }
-        set((state) => {
-          const msgs = state.messagesByChatId[chatId] ?? [];
-          const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
-          if (idx === -1) {
-            return {
-              lastError: "Chat response ended unexpectedly. Please try again.",
-              isStreaming: false,
-              activeStreamChatId: null,
-              streamCancel: null,
-              streamTimerId: null,
-            };
-          }
-          const next = [...msgs];
-          next[idx] = {
-            ...next[idx],
-            status: "error" as MsgStatus,
-            text: next[idx].text || "[Error: Chat response ended unexpectedly.]",
-          };
-          return {
-            lastError: "Chat response ended unexpectedly. Please try again.",
-            messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-            isStreaming: false,
-            activeStreamChatId: null,
-            streamCancel: null,
-            streamTimerId: null,
-          };
+          fallbackText: `[Error: ${response.error.message}]`,
         });
-        return false;
-      }
-    } catch {
-      if (get().activeStreamChatId !== chatId || !get().isStreaming) {
-        return true;
-      }
-      set((state) => {
-        const msgs = state.messagesByChatId[chatId] ?? [];
-        const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
-        if (idx === -1) {
-          return {
-            lastError: "Chat request failed unexpectedly. Please try again.",
-            isStreaming: false,
-            activeStreamChatId: null,
-            streamCancel: null,
-            streamTimerId: null,
-          };
-        }
-        const next = [...msgs];
-        next[idx] = {
-          ...next[idx],
-          status: "error" as MsgStatus,
-          text: next[idx].text || "[Error: Chat request failed unexpectedly.]",
-        };
-        return {
-          lastError: "Chat request failed unexpectedly. Please try again.",
-          messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-          isStreaming: false,
-          activeStreamChatId: null,
-          streamCancel: null,
-          streamTimerId: null,
-        };
+        return failureState;
       });
       return false;
     }
-    return true;
+
+    return consumeAssistantStream({
+      chatId,
+      response,
+      set,
+      get,
+      copy: {
+        invalidStartMessage: "Chat stream started with an unexpected payload.",
+        errorPrefix: "Chat failed. ",
+        unexpectedEndMessage: "Chat response ended unexpectedly. Please try again.",
+        unexpectedEndFallbackText: "[Error: Chat response ended unexpectedly.]",
+        requestFailedMessage: "Chat request failed unexpectedly. Please try again.",
+        requestFailedFallbackText: "[Error: Chat request failed unexpectedly.]",
+      },
+      onStart: (state, event) => {
+        const messages = getChatMessages(state, chatId);
+        const baseMessages = messages.length >= 2 ? messages.slice(0, -2) : messages;
+        const userMessage = mapDtoToMessage(event.userMessage, "final");
+        const assistantMessage = mapDtoToMessage(event.assistantMessage, "streaming");
+
+        return {
+          ...replaceChatMessages(state, chatId, [...baseMessages, userMessage, assistantMessage]),
+          latestUserMessageIdByChatId: { ...state.latestUserMessageIdByChatId, [chatId]: userMessage.id },
+          focusedUserMessageIdByChatId: { ...state.focusedUserMessageIdByChatId, [chatId]: userMessage.id },
+        };
+      },
+    });
   },
 
   resendEditedPrompt: async (userMessageId, newText) => {
@@ -781,9 +810,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
         messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
         latestUserMessageIdByChatId: { ...state.latestUserMessageIdByChatId, [chatId]: userMessageId },
         focusedUserMessageIdByChatId: { ...state.focusedUserMessageIdByChatId, [chatId]: userMessageId },
-        chats: sortChatsDescending(
-          state.chats.map((c) => (c.id === chatId ? { ...c, updatedAt: now } : c))
-        ),
+        chats: touchChat(state.chats, chatId, now),
         isStreaming: true,
         activeStreamChatId: chatId,
         streamCancel: null,
@@ -796,199 +823,51 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     });
     if (!response.ok) {
       set((state) => {
-        const msgs = state.messagesByChatId[chatId] ?? [];
-        const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
-        if (idx === -1) {
-          return { isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null };
-        }
-        const next = [...msgs];
-        next[idx] = {
-          ...next[idx],
-          status: "error" as MsgStatus,
-          text: next[idx].text || `[Error: ${response.error.message}]`,
-        };
-        return {
+        const failureState = buildStreamFailureState(state, chatId, {
           lastError: `Unable to regenerate the response. ${response.error.message}`,
-          messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-          isStreaming: false,
-          activeStreamChatId: null,
-          streamCancel: null,
-          streamTimerId: null,
-        };
+          fallbackText: `[Error: ${response.error.message}]`,
+        });
+        return failureState;
       });
       return;
     }
 
-    set({ streamCancel: response.cancel });
-
-    try {
-      let completed = false;
-      for await (const chunk of response.stream) {
-        const evt = parseStreamEvent(chunk);
-        if (!evt) continue;
-
-        if (evt.type === "start") {
-          if (!isRecord(evt.userMessage) || !isRecord(evt.assistantMessage)) {
-            set({ lastError: "Regenerated chat stream started with an unexpected payload." });
-            continue;
-          }
-          set((state) => {
-            const msgs = state.messagesByChatId[chatId] ?? [];
-            const idx = msgs.findIndex((m) => m.id === userMessageId && m.role === "user");
-            if (idx === -1) return {};
-            const userMsg = mapDtoToMessage(evt.userMessage, "final");
-            const assistantMsg = mapDtoToMessage(evt.assistantMessage, "streaming");
-            const next = [...msgs];
-            next[idx] = userMsg;
-            if (next[idx + 1] && next[idx + 1].role === "assistant") next.splice(idx + 1, 1);
-            next.splice(idx + 1, 0, assistantMsg);
-            return {
-              lastError: null,
-              messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-              latestUserMessageIdByChatId: { ...state.latestUserMessageIdByChatId, [chatId]: userMsg.id },
-              focusedUserMessageIdByChatId: { ...state.focusedUserMessageIdByChatId, [chatId]: userMsg.id },
-            };
-          });
-          continue;
+    await consumeAssistantStream({
+      chatId,
+      response,
+      set,
+      get,
+      copy: {
+        invalidStartMessage: "Regenerated chat stream started with an unexpected payload.",
+        errorPrefix: "Regenerate failed. ",
+        unexpectedEndMessage: "Regenerated response ended unexpectedly. Please try again.",
+        unexpectedEndFallbackText: "[Error: Regenerated response ended unexpectedly.]",
+        requestFailedMessage: "Regenerate request failed unexpectedly. Please try again.",
+        requestFailedFallbackText: "[Error: Regenerate request failed unexpectedly.]",
+      },
+      onStart: (state, event) => {
+        const messages = getChatMessages(state, chatId);
+        const userIndex = messages.findIndex((message) => message.id === userMessageId && message.role === "user");
+        if (userIndex === -1) {
+          return {};
         }
 
-        if (evt.type === "delta") {
-          set((state) => {
-            const msgs = state.messagesByChatId[chatId] ?? [];
-            const idx = msgs.findIndex((m) => m.id === evt.messageId);
-            if (idx === -1) return {};
-            const m = msgs[idx];
-            if (m.role !== "assistant") return {};
-            const updated = { ...m, text: m.text + evt.text, status: "streaming" as MsgStatus };
-            const next = [...msgs];
-            next[idx] = updated;
-            return { messagesByChatId: { ...state.messagesByChatId, [chatId]: next } };
-          });
-          continue;
+        const nextMessages = [...messages];
+        const userMessage = mapDtoToMessage(event.userMessage, "final");
+        const assistantMessage = mapDtoToMessage(event.assistantMessage, "streaming");
+        nextMessages[userIndex] = userMessage;
+        if (nextMessages[userIndex + 1]?.role === "assistant") {
+          nextMessages.splice(userIndex + 1, 1);
         }
+        nextMessages.splice(userIndex + 1, 0, assistantMessage);
 
-        if (evt.type === "final") {
-          completed = true;
-          set((state) => {
-            const msgs = state.messagesByChatId[chatId] ?? [];
-            const idx = msgs.findIndex((m) => m.id === evt.messageId);
-            if (idx === -1) {
-              return { isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null };
-            }
-            const m = msgs[idx];
-            if (m.role !== "assistant") {
-              return { isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null };
-            }
-            const updated = { ...m, status: "final" as MsgStatus, text: evt.fullText ?? m.text };
-            const next = [...msgs];
-            next[idx] = updated;
-            return {
-              lastError: null,
-              messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-              isStreaming: false,
-              activeStreamChatId: null,
-              streamCancel: null,
-              streamTimerId: null,
-            };
-          });
-          break;
-        }
-
-        if (evt.type === "error") {
-          set((state) => {
-            const msgs = state.messagesByChatId[chatId] ?? [];
-            const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
-            if (idx === -1) {
-              return {
-                lastError: `Regenerate failed. ${evt.message}`,
-                isStreaming: false,
-                activeStreamChatId: null,
-                streamCancel: null,
-                streamTimerId: null,
-              };
-            }
-            const next = [...msgs];
-            next[idx] = {
-              ...next[idx],
-              status: "error" as MsgStatus,
-              text: next[idx].text || `[Error: ${evt.message}]`,
-            };
-            return {
-              lastError: `Regenerate failed. ${evt.message}`,
-              messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-              isStreaming: false,
-              activeStreamChatId: null,
-              streamCancel: null,
-              streamTimerId: null,
-            };
-          });
-          return;
-        }
-      }
-      if (!completed) {
-        if (get().activeStreamChatId !== chatId || !get().isStreaming) {
-          return;
-        }
-        set((state) => {
-          const msgs = state.messagesByChatId[chatId] ?? [];
-          const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
-          if (idx === -1) {
-            return {
-              lastError: "Regenerated response ended unexpectedly. Please try again.",
-              isStreaming: false,
-              activeStreamChatId: null,
-              streamCancel: null,
-              streamTimerId: null,
-            };
-          }
-          const next = [...msgs];
-          next[idx] = {
-            ...next[idx],
-            status: "error" as MsgStatus,
-            text: next[idx].text || "[Error: Regenerated response ended unexpectedly.]",
-          };
-          return {
-            lastError: "Regenerated response ended unexpectedly. Please try again.",
-            messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-            isStreaming: false,
-            activeStreamChatId: null,
-            streamCancel: null,
-            streamTimerId: null,
-          };
-        });
-      }
-    } catch {
-      if (get().activeStreamChatId !== chatId || !get().isStreaming) {
-        return;
-      }
-      set((state) => {
-        const msgs = state.messagesByChatId[chatId] ?? [];
-        const idx = msgs.findIndex((m) => m.role === "assistant" && m.status === "streaming");
-        if (idx === -1) {
-          return {
-            lastError: "Regenerate request failed unexpectedly. Please try again.",
-            isStreaming: false,
-            activeStreamChatId: null,
-            streamCancel: null,
-            streamTimerId: null,
-          };
-        }
-        const next = [...msgs];
-        next[idx] = {
-          ...next[idx],
-          status: "error" as MsgStatus,
-          text: next[idx].text || "[Error: Regenerate request failed unexpectedly.]",
-        };
         return {
-          lastError: "Regenerate request failed unexpectedly. Please try again.",
-          messagesByChatId: { ...state.messagesByChatId, [chatId]: next },
-          isStreaming: false,
-          activeStreamChatId: null,
-          streamCancel: null,
-          streamTimerId: null,
+          ...replaceChatMessages(state, chatId, nextMessages),
+          latestUserMessageIdByChatId: { ...state.latestUserMessageIdByChatId, [chatId]: userMessage.id },
+          focusedUserMessageIdByChatId: { ...state.focusedUserMessageIdByChatId, [chatId]: userMessage.id },
         };
-      });
-    }
+      },
+    });
   },
 
   stopStreaming: () => {
@@ -998,32 +877,21 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     if (timerId) window.clearInterval(timerId);
     const chatId = get().activeStreamChatId;
     if (!chatId) {
-      set({ isStreaming: false, activeStreamChatId: null, streamCancel: null, streamTimerId: null });
+      set(createIdleStreamState());
       return;
     }
 
     set((state) => {
-      const msgs = state.messagesByChatId[chatId] ?? [];
+      const msgs = getChatMessages(state, chatId);
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant" && last.status === "streaming") {
         const updated = { ...last, status: "final" as MsgStatus };
         return {
-          messagesByChatId: {
-            ...state.messagesByChatId,
-            [chatId]: [...msgs.slice(0, -1), updated],
-          },
-          isStreaming: false,
-          activeStreamChatId: null,
-          streamCancel: null,
-          streamTimerId: null,
+          ...replaceChatMessages(state, chatId, [...msgs.slice(0, -1), updated]),
+          ...createIdleStreamState(),
         };
       }
-      return {
-        isStreaming: false,
-        activeStreamChatId: null,
-        streamCancel: null,
-        streamTimerId: null,
-      };
+      return createIdleStreamState();
     });
   },
 });

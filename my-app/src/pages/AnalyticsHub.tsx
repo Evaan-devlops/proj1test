@@ -223,8 +223,28 @@ function FinancialImpactPieCard({
     "#fb7185",
     "#a78bfa",
   ];
-
-  let cumulativeFraction = 0;
+  const chartSegments = chartItems.reduce<
+    Array<{
+      service: string;
+      color: string;
+      dashArray: string;
+      dashOffset: number;
+      endFraction: number;
+    }>
+  >((segments, item, index) => {
+    const startFraction = segments.length > 0 ? segments[segments.length - 1].endFraction : 0;
+    const fraction = total > 0 ? item.cost / total : 0;
+    return [
+      ...segments,
+      {
+        service: item.service,
+        color: palette[index % palette.length],
+        dashArray: `${circumference * fraction} ${circumference}`,
+        dashOffset: circumference * (1 - startFraction),
+        endFraction: startFraction + fraction,
+      },
+    ];
+  }, []);
 
   return (
     <div className={classNames(glassPanelClass, "p-6 text-slate-900")}>
@@ -234,27 +254,20 @@ function FinancialImpactPieCard({
         <div className="relative flex h-[220px] w-[220px] items-center justify-center">
           <svg viewBox="0 0 220 220" className="h-[220px] w-[220px] -rotate-90" aria-hidden="true">
             <circle cx="110" cy="110" r={radius} fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth="28" />
-            {chartItems.map((item, index) => {
-              const fraction = total > 0 ? item.cost / total : 0;
-              const dashLength = circumference * fraction;
-              const dashOffset = circumference * (1 - cumulativeFraction);
-              cumulativeFraction += fraction;
-
-              return (
-                <circle
-                  key={item.service}
-                  cx="110"
-                  cy="110"
-                  r={radius}
-                  fill="none"
-                  stroke={palette[index % palette.length]}
-                  strokeWidth="28"
-                  strokeLinecap="round"
-                  strokeDasharray={`${dashLength} ${circumference}`}
-                  strokeDashoffset={dashOffset}
-                />
-              );
-            })}
+            {chartSegments.map((segment) => (
+              <circle
+                key={segment.service}
+                cx="110"
+                cy="110"
+                r={radius}
+                fill="none"
+                stroke={segment.color}
+                strokeWidth="28"
+                strokeLinecap="round"
+                strokeDasharray={segment.dashArray}
+                strokeDashoffset={segment.dashOffset}
+              />
+            ))}
           </svg>
 
           <div className="absolute inset-[45px] rounded-full border border-white/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.72),rgba(219,234,254,0.34))] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-xl" />
@@ -388,8 +401,10 @@ export default function AnalyticsHub({
     return messagesByChatId[activeChatId]?.length ?? 0;
   }, [activeChatId, messagesByChatId]);
 
-  async function loadSnapshot() {
-    setLoadingSnapshot(true);
+  async function loadSnapshot(showLoading = true) {
+    if (showLoading) {
+      setLoadingSnapshot(true);
+    }
     const result = await chatApi.getAnalyticsHubSnapshot();
     if (!result.ok || !result.data) {
       setLoadingSnapshot(false);
@@ -409,7 +424,10 @@ export default function AnalyticsHub({
   }
 
   useEffect(() => {
-    void loadSnapshot();
+    const timerId = window.setTimeout(() => {
+      void loadSnapshot(false);
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, []);
 
   useEffect(() => {

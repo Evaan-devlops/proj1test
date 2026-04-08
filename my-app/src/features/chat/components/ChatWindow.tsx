@@ -5,6 +5,7 @@ import { buildFollowUpSuggestions } from "src/features/chat/lib/followUps";
 import TypingDots from "./TypingDots";
 
 const MarkdownMessage = lazy(() => import("./MarkdownMessage"));
+const EMPTY_MESSAGES: Message[] = [];
 
 function CopyIcon() {
   return (
@@ -138,8 +139,9 @@ type TurnRowProps = {
   draft: string;
   setDraft: Dispatch<SetStateAction<string>>;
   resendEditedPrompt: (userMessageId: string, newText: string) => void;
-  sendSuggestedPrompt: (text: string) => void;
-  editSuggestedPrompt: (text: string) => void;
+  sendMessage: (text: string) => Promise<boolean>;
+  setComposerText: (text: string) => void;
+  requestComposerFocus: () => void;
   suggestionsDisabled: boolean;
 };
 
@@ -154,17 +156,15 @@ const TurnRow = memo(function TurnRow({
   draft,
   setDraft,
   resendEditedPrompt,
-  sendSuggestedPrompt,
-  editSuggestedPrompt,
+  sendMessage,
+  setComposerText,
+  requestComposerFocus,
   suggestionsDisabled,
 }: TurnRowProps) {
   const user = turn.user;
   const assistant = turn.assistant;
   const isEditing = editingUserId === user.id;
-  const followUps = useMemo(
-    () => (assistant?.status === "final" ? buildFollowUpSuggestions(user.text, assistant.text) : []),
-    [assistant?.status, assistant?.text, user.text],
-  );
+  const followUps = assistant?.status === "final" ? buildFollowUpSuggestions(user.text, assistant.text) : [];
 
   async function copyPrompt(text: string, id: string) {
     try {
@@ -186,6 +186,17 @@ const TurnRow = memo(function TurnRow({
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
+  }
+
+  function editSuggestedPrompt(question: string) {
+    setComposerText(question);
+    requestComposerFocus();
+  }
+
+  function sendSuggestedPrompt(question: string) {
+    if (suggestionsDisabled) return;
+    setComposerText("");
+    void sendMessage(question);
   }
 
   return (
@@ -329,9 +340,9 @@ const TurnRow = memo(function TurnRow({
 
 export default function ChatWindow() {
   const activeChatId = useChatStore((s) => s.activeChatId);
-  const messagesByChatId = useChatStore((s) => s.messagesByChatId);
-  const latestUserMessageIdByChatId = useChatStore((s) => s.latestUserMessageIdByChatId);
-  const focusedUserMessageIdByChatId = useChatStore((s) => s.focusedUserMessageIdByChatId);
+  const messages = useChatStore((s) => (activeChatId ? s.messagesByChatId[activeChatId] ?? EMPTY_MESSAGES : EMPTY_MESSAGES));
+  const latestUserId = useChatStore((s) => (activeChatId ? s.latestUserMessageIdByChatId[activeChatId] : undefined));
+  const storedFocusedUserId = useChatStore((s) => (activeChatId ? s.focusedUserMessageIdByChatId[activeChatId] : undefined));
   const resendEditedPrompt = useChatStore((s) => s.resendEditedPrompt);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const isStreaming = useChatStore((s) => s.isStreaming);
@@ -340,11 +351,6 @@ export default function ChatWindow() {
   const setComposerText = useUiStore((s) => s.setComposerText);
   const requestComposerFocus = useUiStore((s) => s.requestComposerFocus);
   const constrainedLayout = layoutMode === "single" && sidebarOpen;
-
-  const messages = useMemo(
-    () => (activeChatId ? messagesByChatId[activeChatId] ?? [] : []),
-    [activeChatId, messagesByChatId],
-  );
 
   const turns: Turn[] = useMemo(() => {
     const out: Turn[] = [];
@@ -362,10 +368,7 @@ export default function ChatWindow() {
     return out;
   }, [messages]);
 
-  const storedFocusedUserId = activeChatId ? focusedUserMessageIdByChatId[activeChatId] : undefined;
   const resolvedFocusedUserId = storedFocusedUserId ?? turns[turns.length - 1]?.user.id;
-
-  const latestUserId = activeChatId ? latestUserMessageIdByChatId[activeChatId] : undefined;
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const turnRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -393,22 +396,11 @@ export default function ChatWindow() {
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [isStreaming, turns.length, lastMessage?.id, lastMessage?.status, lastMessageTextLength]);
+  }, [isStreaming, turns.length, lastMessage?.id, lastMessage?.role, lastMessage?.status, lastMessageTextLength]);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-
-  function editSuggestedPrompt(text: string) {
-    setComposerText(text);
-    requestComposerFocus();
-  }
-
-  function sendSuggestedPrompt(text: string) {
-    if (isStreaming) return;
-    setComposerText("");
-    void sendMessage(text);
-  }
 
   if (!activeChatId) {
     return (
@@ -455,8 +447,9 @@ export default function ChatWindow() {
                 draft={draft}
                 setDraft={setDraft}
                 resendEditedPrompt={resendEditedPrompt}
-                sendSuggestedPrompt={sendSuggestedPrompt}
-                editSuggestedPrompt={editSuggestedPrompt}
+                sendMessage={sendMessage}
+                setComposerText={setComposerText}
+                requestComposerFocus={requestComposerFocus}
                 suggestionsDisabled={isStreaming}
               />
             </div>
