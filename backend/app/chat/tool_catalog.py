@@ -144,6 +144,35 @@ AWS_TOOL_CATALOG: tuple[AwsToolDefinition, ...] = (
         live_call_required=True,
         trigger_phrases=("idle ec2", "unused instance", "idle check", "underused instance"),
     ),
+    AwsToolDefinition(
+        tool_name="ecs_insights",
+        endpoint="/api/v1/aws/ecs/insights",
+        summary="Inspects ECS clusters, services, deployments, tasks, and recent service events.",
+        use_when=(
+            "Use when the user asks about ECS cluster health, whether ECS services are running, "
+            "task status, deployment status, stopped tasks, service events, or genai service monitoring."
+        ),
+        response_shape=(
+            "Returns `clusters[]` with `cluster_name`, `status`, `severity`, `insight`, and "
+            "`services[]`; each service includes desired/running/pending task counts, deployment "
+            "status, recent events, and `tasks[]` with status, health, stopped reason, and container reasons."
+        ),
+        required_inputs=(),
+        optional_inputs=("account_keys", "cluster_names", "service_filter"),
+        cache_value="medium",
+        live_call_required=True,
+        trigger_phrases=(
+            "ecs",
+            "cluster health",
+            "service status",
+            "tasks running",
+            "stopped task",
+            "deployment status",
+            "genai service",
+            "test-vsl-ecs-cluster",
+            "dev-vsl-ecs-cluster",
+        ),
+    ),
 )
 
 

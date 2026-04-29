@@ -11,8 +11,10 @@ from app.schemas.aws import (
     BudgetRequest,
     CostBreakdownRequest,
     Ec2IdleRequest,
+    EcsInsightRequest,
     MultiAccountBudgetResponse,
     MultiAccountCostBreakdownResponse,
+    MultiAccountEcsInsightResponse,
     MultiAccountIdleResponse,
     MultiAccountResourceCostResponse,
     MultiAccountServiceCostResponse,
@@ -243,6 +245,25 @@ async def ec2_idle_check(
         endpoint="/api/v1/aws/ec2/idle-check",
         response_model=MultiAccountIdleResponse,
         service_response=await service.get_ec2_idle_status(payload),
+        request_payload=payload,
+        archive_service=archive_service,
+    )
+
+
+@router.post(
+    "/ecs/insights",
+    response_model=MultiAccountEcsInsightResponse,
+    summary="Inspect ECS cluster, service, and task health",
+)
+async def ecs_insights(
+    payload: EcsInsightRequest,
+    service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
+) -> MultiAccountEcsInsightResponse:
+    return _validate_and_archive_response(
+        endpoint="/api/v1/aws/ecs/insights",
+        response_model=MultiAccountEcsInsightResponse,
+        service_response=await service.get_ecs_insights(payload),
         request_payload=payload,
         archive_service=archive_service,
     )
