@@ -16,6 +16,7 @@ from app.schemas.aws import (
     BudgetRequest,
     CostBreakdownRequest,
     Ec2IdleRequest,
+    EcsInsightRequest,
     ResourceCostRequest,
 )
 from app.schemas.chat import (
@@ -45,6 +46,10 @@ BUDGET_NAME_PATTERN = re.compile(r"budget\s+(?:named|name)\s+([A-Za-z0-9._-]+)",
 RESOURCE_ID_PATTERN = re.compile(r"\b(?:i|vol|eni|subnet|sg)-[A-Za-z0-9]+\b")
 INSTANCE_ID_PATTERN = re.compile(r"\bi-[A-Za-z0-9]+\b")
 IDLE_DAYS_PATTERN = re.compile(r"idle\s+for\s+(\d+)\s+day")
+ECS_CLUSTER_PATTERN = re.compile(r"\b[A-Za-z0-9._-]+-ecs-cluster\b")
+SERVICE_FILTER_PATTERN = re.compile(
+    r"(?:service\s+(?:named|name|contains|matching)|filter\s+(?:contains|matching)?)\s+([A-Za-z0-9._-]+)"
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,8 @@ class QueryContext:
     resource_id: str | None
     instance_ids: list[str]
     idle_days: int
+    cluster_names: list[str]
+    service_filter: str | None
 
 
 @dataclass(frozen=True)
@@ -101,6 +108,7 @@ class ChatService:
             "budget": self._execute_budget_tool,
             "resource_cost": self._execute_resource_cost_tool,
             "ec2_idle_check": self._execute_ec2_idle_check_tool,
+            "ecs_insights": self._execute_ecs_insights_tool,
         }
 
     def stream_new_message(
@@ -451,6 +459,8 @@ class ChatService:
                 score += 2
             if tool.tool_name == "ec2_idle_check" and self._extract_instance_ids(lowered_query):
                 score += 2
+            if tool.tool_name == "ecs_insights" and ECS_CLUSTER_PATTERN.search(lowered_query):
+                score += 2
             if score > 0:
                 scored_tools.append((score, tool))
 
@@ -533,6 +543,15 @@ class ChatService:
                 days=query_context.days,
                 instance_ids=query_context.instance_ids,
                 idle_days=query_context.idle_days,
+            )
+        )
+
+    async def _execute_ecs_insights_tool(self, query_context: QueryContext) -> dict[str, Any]:
+        return await self.aws_service.get_ecs_insights(
+            EcsInsightRequest(
+                account_keys=query_context.account_keys,
+                cluster_names=query_context.cluster_names,
+                service_filter=query_context.service_filter,
             )
         )
 
@@ -703,6 +722,31 @@ class ChatService:
                 f"EC2 idle check for account `{account_key}`.\n\n"
                 f"{self._markdown_table(['Instance ID', 'CPU Idle', 'Network Idle', 'Idle'], rows) if rows else 'No EC2 instance rows were returned.'}\n\n"
                 f"Idle EC2 instances: {', '.join(idle_instances) if idle_instances else 'none'}."
+            )
+
+        if tool.tool_name == "ecs_insights":
+            clusters = data.get("clusters", [])
+            rows: list[list[Any]] = []
+            affected: list[str] = []
+            for cluster in clusters:
+                for service in cluster.get("services", []):
+                    rows.append(
+                        [
+                            cluster.get("cluster_name", "-"),
+                            service.get("service_name", "-"),
+                            service.get("severity", "-"),
+                            service.get("status", "-"),
+                            f"{service.get('running_count', '-')}/{service.get('desired_count', '-')}",
+                            service.get("pending_count", "-"),
+                            service.get("deployment_status", "-"),
+                        ]
+                    )
+                    if service.get("severity") in {"critical", "warning"}:
+                        affected.append(f"{cluster.get('cluster_name', '-')}/{service.get('service_name', '-')}")
+            return (
+                f"ECS insight for account `{account_key}`.\n\n"
+                f"{self._markdown_table(['Cluster', 'Service', 'Severity', 'Status', 'Running/Desired', 'Pending', 'Deployment'], rows) if rows else 'No ECS services matched the requested filter.'}\n\n"
+                f"Affected services: {', '.join(affected) if affected else 'none'}."
             )
 
         return json.dumps(live_result, ensure_ascii=True)
@@ -1028,6 +1072,10 @@ class ChatService:
             payload["instance_ids"] = query_context.instance_ids
         if "idle_days" in tool.optional_inputs:
             payload["idle_days"] = query_context.idle_days
+        if "cluster_names" in tool.optional_inputs:
+            payload["cluster_names"] = query_context.cluster_names
+        if "service_filter" in tool.optional_inputs:
+            payload["service_filter"] = query_context.service_filter
         return payload
 
     def _extract_query_context(
@@ -1045,6 +1093,8 @@ class ChatService:
             resource_id=self._extract_resource_id(query_text),
             instance_ids=self._extract_instance_ids(query_text),
             idle_days=self._extract_idle_days(lowered_query),
+            cluster_names=self._extract_cluster_names(query_text),
+            service_filter=self._extract_service_filter(lowered_query),
         )
 
     def _resolve_account_keys(
@@ -1106,6 +1156,20 @@ class ChatService:
         if idle_match:
             return max(1, int(idle_match.group(1)))
         return DEFAULT_IDLE_DAYS
+
+    def _extract_cluster_names(self, query_text: str) -> list[str]:
+        matches = ECS_CLUSTER_PATTERN.findall(query_text)
+        if matches:
+            return list(dict.fromkeys(matches))
+        return ["test-vsl-ecs-cluster", "dev-vsl-ecs-cluster"]
+
+    def _extract_service_filter(self, lowered_query: str) -> str | None:
+        if "genai" in lowered_query:
+            return "genai"
+        match = SERVICE_FILTER_PATTERN.search(lowered_query)
+        if match:
+            return match.group(1)
+        return "genai"
 
     def _follow_up_if_missing(
         self,

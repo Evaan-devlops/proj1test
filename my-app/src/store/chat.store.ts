@@ -411,22 +411,14 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     }
 
     const result = await chatApi.listAccounts();
-    if (!result.ok || !result.data) {
+    if (!result.ok) {
       set({
-        lastError: result.ok
-          ? "Accounts response was empty."
-          : `Unable to load accounts. ${result.error.message}`,
+        lastError: `Unable to load accounts. ${result.error.message}`,
       });
       return;
     }
 
-    const accounts = Array.isArray(result.data.accounts) ? result.data.accounts : null;
-    if (!accounts) {
-      set({ lastError: "Accounts response had an unexpected format." });
-      return;
-    }
-
-    const accountKeys = accounts
+    const accountKeys = result.data.accounts
       .filter((account) => account && typeof account.account_key === "string")
       .map((account) => account.account_key);
     set({
@@ -472,21 +464,9 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     set({ isLoadingChats: true });
     const result = await chatApi.listChats({ limit: 50 });
 
-    if (!result.ok || !result.data) {
+    if (!result.ok) {
       set({
-        lastError: result.ok
-          ? "Chats response was empty."
-          : `Unable to load chats. ${result.error.message}`,
-        isLoadingChats: false,
-        chatsLoaded: false,
-      });
-      return;
-    }
-
-    const items = Array.isArray(result.data.items) ? result.data.items : null;
-    if (!items) {
-      set({
-        lastError: "Chats response had an unexpected format.",
+        lastError: `Unable to load chats. ${result.error.message}`,
         isLoadingChats: false,
         chatsLoaded: false,
       });
@@ -495,7 +475,7 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
 
     set((state) => {
       const mapped = sortChatsDescending(
-        items.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAtMs }))
+        result.data.items.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAtMs }))
       );
       const messagesByChatId = { ...state.messagesByChatId };
       const messagesLoaded = { ...state.messagesLoadedByChatId };
@@ -521,22 +501,14 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
   loadMessagesIfNeeded: async (chatId) => {
     if (get().messagesLoadedByChatId[chatId]) return;
     const result = await chatApi.listMessages(chatId, { limit: 200 });
-    if (!result.ok || !result.data) {
+    if (!result.ok) {
       set({
-        lastError: result.ok
-          ? "Messages response was empty."
-          : `Unable to load messages. ${result.error.message}`,
+        lastError: `Unable to load messages. ${result.error.message}`,
       });
       return;
     }
 
-    const items = Array.isArray(result.data.items) ? result.data.items : null;
-    if (!items) {
-      set({ lastError: "Messages response had an unexpected format." });
-      return;
-    }
-
-    const mapped = items.map((m) => mapDtoToMessage(m));
+    const mapped = result.data.items.map((m) => mapDtoToMessage(m));
     const lastUser = [...mapped].reverse().find((m) => m.role === "user");
 
     set((state) => ({
@@ -567,19 +539,13 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     }
 
     const result = await chatApi.createChat({ title: "New chat" });
-    if (!result.ok || !result.data) {
+    if (!result.ok) {
       set({
-        lastError: result.ok
-          ? "Create chat response was empty."
-          : `Unable to create a new chat. ${result.error.message}`,
+        lastError: `Unable to create a new chat. ${result.error.message}`,
       });
       return null;
     }
     const chat = result.data.chat;
-    if (!isRecord(chat) || typeof chat.id !== "string" || typeof chat.title !== "string") {
-      set({ lastError: "Create chat response had an unexpected format." });
-      return null;
-    }
     set((state) => ({
       lastError: null,
       chats: sortChatsDescending([
@@ -597,19 +563,13 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
     const trimmed = title.trim();
     if (!trimmed) return;
     const result = await chatApi.renameChat(chatId, { title: trimmed });
-    if (!result.ok || !result.data) {
+    if (!result.ok) {
       set({
-        lastError: result.ok
-          ? "Rename chat response was empty."
-          : `Unable to rename the chat. ${result.error.message}`,
+        lastError: `Unable to rename the chat. ${result.error.message}`,
       });
       return;
     }
     const chat = result.data.chat;
-    if (!isRecord(chat) || typeof chat.title !== "string") {
-      set({ lastError: "Rename chat response had an unexpected format." });
-      return;
-    }
     set((state) => ({
       lastError: null,
       chats: sortChatsDescending(

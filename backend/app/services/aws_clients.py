@@ -30,5 +30,8 @@ class AwsClientFactory:
     def acm(self):
         return self._session.client("acm", region_name=self.account.region)
 
+    def ecs(self):
+        return self._session.client("ecs", region_name=self.account.region)
+
     def tagging(self):
         return self._session.client("resourcegroupstaggingapi", region_name=self.account.region)

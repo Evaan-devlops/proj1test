@@ -98,6 +98,23 @@ class Ec2IdleRequest(AwsAccountsRequest):
     )
 
 
+class EcsInsightRequest(AwsSchemaBase):
+    account_keys: list[str] | None = Field(
+        default=None,
+        description="Configured AWS account aliases from `.env`. If omitted, all accounts are checked.",
+        examples=[["dev"]],
+    )
+    cluster_names: list[str] = Field(
+        default_factory=lambda: ["test-vsl-ecs-cluster", "dev-vsl-ecs-cluster"],
+        min_length=1,
+        description="ECS cluster names to inspect.",
+    )
+    service_filter: str | None = Field(
+        default="genai",
+        description="Case-insensitive service-name substring filter. Defaults to `genai`.",
+    )
+
+
 class ServiceCostItem(BaseModel):
     service: str = Field(
         ...,
@@ -308,6 +325,14 @@ class MultiAccountIdleResponse(MultiAccountAggregateResponse[MultiAccountIdleRes
     succeeded_accounts: list[AccountSuccess[MultiAccountIdleResult]]
 
 
+class MultiAccountEcsInsightResult(BaseModel):
+    clusters: list["AnalyticsEcsClusterItem"]
+
+
+class MultiAccountEcsInsightResponse(MultiAccountAggregateResponse[MultiAccountEcsInsightResult]):
+    succeeded_accounts: list[AccountSuccess[MultiAccountEcsInsightResult]]
+
+
 class AnalyticsServiceSpendItem(BaseModel):
     service: str
     cost: float
@@ -325,6 +350,43 @@ class AnalyticsCertificateItem(BaseModel):
     days_to_expiry: int
 
 
+class AnalyticsEcsTaskItem(BaseModel):
+    task_arn: str
+    task_id: str
+    last_status: str
+    desired_status: str
+    health_status: str | None = None
+    launch_type: str | None = None
+    stopped_reason: str | None = None
+    container_reasons: list[str] = []
+    severity: str
+
+
+class AnalyticsEcsServiceItem(BaseModel):
+    service_name: str
+    service_arn: str
+    status: str
+    desired_count: int
+    running_count: int
+    pending_count: int
+    launch_type: str | None = None
+    task_definition: str | None = None
+    deployment_status: str | None = None
+    severity: str
+    insight: str
+    events: list[str] = []
+    tasks: list[AnalyticsEcsTaskItem] = []
+
+
+class AnalyticsEcsClusterItem(BaseModel):
+    cluster_name: str
+    cluster_arn: str | None = None
+    status: str | None = None
+    severity: str
+    insight: str
+    services: list[AnalyticsEcsServiceItem] = []
+
+
 class AnalyticsHubAccountSnapshot(BaseModel):
     account_key: str
     account_id: str
@@ -335,6 +397,7 @@ class AnalyticsHubAccountSnapshot(BaseModel):
     service_spend_30d: list[AnalyticsServiceSpendItem]
     monthly_cost_trend: list[AnalyticsMonthlyCostItem]
     expiring_certificates: list[AnalyticsCertificateItem]
+    ecs_clusters: list[AnalyticsEcsClusterItem] = []
 
 
 class AnalyticsHubAccountError(BaseModel):

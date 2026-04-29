@@ -22,6 +22,7 @@ from app.schemas.aws import (
     BudgetRequest,
     CostBreakdownRequest,
     Ec2IdleRequest,
+    EcsInsightRequest,
     IdleStatusItem,
     ResourceCostRequest,
 )
@@ -51,6 +52,7 @@ PROJECT_OWNER_TAG_KEYS = {
     "serviceowner",
     "team",
 }
+ECS_INSIGHT_CLUSTER_NAMES = ("test-vsl-ecs-cluster", "dev-vsl-ecs-cluster")
 AccountWorker = Callable[[AwsAccountConfig], Any]
 CachedAnalyticsValue = tuple[datetime, Any]
 
@@ -188,6 +190,18 @@ class AwsInsightsService:
             lambda account: self._ec2_idle_worker(account, payload),
         )
 
+    async def get_ecs_insights(self, payload: EcsInsightRequest) -> dict[str, Any]:
+        return await self._run_for_accounts(
+            payload.account_keys,
+            lambda account: {
+                "clusters": self._ecs_insights_worker(
+                    account,
+                    cluster_names=payload.cluster_names,
+                    service_filter=payload.service_filter,
+                )
+            },
+        )
+
     async def build_analytics_hub_snapshot(self) -> dict[str, Any]:
         accounts = self._resolve_accounts(None)
         semaphore = asyncio.Semaphore(settings.max_parallel_accounts)
@@ -245,6 +259,7 @@ class AwsInsightsService:
         monthly_cost_trend = self._monthly_cost_trend_worker(account, 180)
         expiring_certificates = self._acm_expiry_worker(account, 90)
         project_metadata = self._project_metadata_worker(account)
+        ecs_clusters = self._ecs_insights_worker(account)
 
         sorted_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)
         top_service_rows = [
@@ -268,7 +283,253 @@ class AwsInsightsService:
             "service_spend_30d": top_service_rows,
             "monthly_cost_trend": monthly_cost_trend,
             "expiring_certificates": expiring_certificates,
+            "ecs_clusters": ecs_clusters,
         }
+
+    def _ecs_insights_worker(
+        self,
+        account: AwsAccountConfig,
+        cluster_names: list[str] | None = None,
+        service_filter: str | None = None,
+    ) -> list[dict[str, Any]]:
+        client = self._client_factory(account).ecs()
+        clusters: list[dict[str, Any]] = []
+
+        for cluster_name in cluster_names or list(ECS_INSIGHT_CLUSTER_NAMES):
+            cluster = self._ecs_cluster_snapshot(client, cluster_name, service_filter=service_filter)
+            clusters.append(cluster)
+
+        return clusters
+
+    def _ecs_cluster_snapshot(
+        self,
+        client: Any,
+        cluster_name: str,
+        service_filter: str | None = None,
+    ) -> dict[str, Any]:
+        described_clusters = client.describe_clusters(clusters=[cluster_name]).get("clusters", [])
+        cluster = described_clusters[0] if described_clusters else {}
+        cluster_arn = cluster.get("clusterArn")
+        cluster_status = cluster.get("status") or "MISSING"
+
+        if not cluster_arn:
+            return {
+                "cluster_name": cluster_name,
+                "cluster_arn": None,
+                "status": cluster_status,
+                "severity": "critical",
+                "insight": "ECS cluster was not found or could not be described.",
+                "services": [],
+            }
+
+        service_arns = self._list_ecs_service_arns(client, cluster_arn)
+        services: list[dict[str, Any]] = []
+        for batch in self._chunks(service_arns, 10):
+            response = client.describe_services(cluster=cluster_arn, services=batch)
+            for service in response.get("services", []):
+                service_name = service.get("serviceName") or service.get("serviceArn", "").rsplit("/", 1)[-1]
+                if service_filter and service_filter.lower() not in service_name.lower():
+                    continue
+                services.append(self._ecs_service_snapshot(client, cluster_arn, service))
+
+        cluster_severity = self._rollup_severity([service["severity"] for service in services])
+        if not services:
+            cluster_severity = "warning"
+        return {
+            "cluster_name": cluster_name,
+            "cluster_arn": cluster_arn,
+            "status": cluster_status,
+            "severity": cluster_severity,
+            "insight": self._ecs_cluster_insight(cluster_status, services),
+            "services": services,
+        }
+
+    def _list_ecs_service_arns(self, client: Any, cluster_arn: str) -> list[str]:
+        paginator = client.get_paginator("list_services")
+        service_arns: list[str] = []
+        for page in paginator.paginate(cluster=cluster_arn):
+            service_arns.extend(page.get("serviceArns", []))
+        return service_arns
+
+    def _ecs_service_snapshot(self, client: Any, cluster_arn: str, service: dict[str, Any]) -> dict[str, Any]:
+        service_arn = service.get("serviceArn", "")
+        service_name = service.get("serviceName") or service_arn.rsplit("/", 1)[-1]
+        desired_count = int(service.get("desiredCount") or 0)
+        running_count = int(service.get("runningCount") or 0)
+        pending_count = int(service.get("pendingCount") or 0)
+        status = service.get("status") or "UNKNOWN"
+        deployments = service.get("deployments", [])
+        primary_deployment = next((item for item in deployments if item.get("status") == "PRIMARY"), deployments[0] if deployments else {})
+        deployment_status = primary_deployment.get("rolloutState")
+        launch_type = primary_deployment.get("launchType")
+        task_definition = service.get("taskDefinition")
+        events = [
+            event.get("message", "")
+            for event in service.get("events", [])[:5]
+            if event.get("message")
+        ]
+        tasks = self._ecs_service_tasks(client, cluster_arn, service_name)
+        task_severity = self._rollup_severity([task["severity"] for task in tasks])
+        service_severity = self._ecs_service_severity(
+            status=status,
+            desired_count=desired_count,
+            running_count=running_count,
+            pending_count=pending_count,
+            deployment_status=deployment_status,
+            task_severity=task_severity,
+        )
+
+        return {
+            "service_name": service_name,
+            "service_arn": service_arn,
+            "status": status,
+            "desired_count": desired_count,
+            "running_count": running_count,
+            "pending_count": pending_count,
+            "launch_type": launch_type,
+            "task_definition": task_definition,
+            "deployment_status": deployment_status,
+            "severity": service_severity,
+            "insight": self._ecs_service_insight(
+                status=status,
+                desired_count=desired_count,
+                running_count=running_count,
+                pending_count=pending_count,
+                deployment_status=deployment_status,
+            ),
+            "events": events,
+            "tasks": tasks,
+        }
+
+    def _ecs_service_tasks(self, client: Any, cluster_arn: str, service_name: str) -> list[dict[str, Any]]:
+        task_arns: list[str] = []
+        for desired_status in ("RUNNING", "PENDING", "STOPPED"):
+            try:
+                response = client.list_tasks(
+                    cluster=cluster_arn,
+                    serviceName=service_name,
+                    desiredStatus=desired_status,
+                    maxResults=20,
+                )
+            except ClientError:
+                continue
+            task_arns.extend(response.get("taskArns", []))
+
+        unique_task_arns = list(dict.fromkeys(task_arns))[:40]
+        tasks: list[dict[str, Any]] = []
+        for batch in self._chunks(unique_task_arns, 100):
+            if not batch:
+                continue
+            response = client.describe_tasks(cluster=cluster_arn, tasks=batch)
+            for task in response.get("tasks", []):
+                container_reasons = [
+                    item
+                    for container in task.get("containers", [])
+                    for item in (
+                        container.get("reason"),
+                        container.get("lastStatus") if container.get("lastStatus") not in {"RUNNING", "PENDING"} else None,
+                    )
+                    if item
+                ]
+                last_status = task.get("lastStatus") or "UNKNOWN"
+                desired_status = task.get("desiredStatus") or "UNKNOWN"
+                health_status = task.get("healthStatus")
+                stopped_reason = task.get("stoppedReason")
+                severity = self._ecs_task_severity(last_status, desired_status, health_status, stopped_reason)
+                task_arn = task.get("taskArn", "")
+                tasks.append(
+                    {
+                        "task_arn": task_arn,
+                        "task_id": task_arn.rsplit("/", 1)[-1] if task_arn else "-",
+                        "last_status": last_status,
+                        "desired_status": desired_status,
+                        "health_status": health_status,
+                        "launch_type": task.get("launchType"),
+                        "stopped_reason": stopped_reason,
+                        "container_reasons": container_reasons,
+                        "severity": severity,
+                    }
+                )
+        return tasks
+
+    def _ecs_cluster_insight(self, status: str, services: list[dict[str, Any]]) -> str:
+        if status != "ACTIVE":
+            return f"Cluster status is {status}; expected ACTIVE."
+        if not services:
+            return "Cluster is active, but no services were returned."
+        critical = sum(1 for service in services if service["severity"] == "critical")
+        warning = sum(1 for service in services if service["severity"] == "warning")
+        if critical:
+            return f"{critical} service(s) are affected and need attention."
+        if warning:
+            return f"{warning} service(s) have warnings."
+        return "Cluster is active and selected services are running as expected."
+
+    def _ecs_service_insight(
+        self,
+        *,
+        status: str,
+        desired_count: int,
+        running_count: int,
+        pending_count: int,
+        deployment_status: str | None,
+    ) -> str:
+        if status != "ACTIVE":
+            return f"Service status is {status}; expected ACTIVE."
+        if running_count < desired_count:
+            return f"Only {running_count}/{desired_count} desired task(s) are running."
+        if pending_count > 0:
+            return f"{pending_count} task(s) are pending."
+        if deployment_status and deployment_status not in {"COMPLETED", "SUCCESSFUL"}:
+            return f"Deployment rollout state is {deployment_status}."
+        return f"Service is active with {running_count}/{desired_count} desired task(s) running."
+
+    def _ecs_service_severity(
+        self,
+        *,
+        status: str,
+        desired_count: int,
+        running_count: int,
+        pending_count: int,
+        deployment_status: str | None,
+        task_severity: str,
+    ) -> str:
+        if status != "ACTIVE" or running_count < desired_count:
+            return "critical"
+        if task_severity == "critical":
+            return "critical"
+        if pending_count > 0 or task_severity == "warning":
+            return "warning"
+        if deployment_status and deployment_status not in {"COMPLETED", "SUCCESSFUL"}:
+            return "warning"
+        return "ok"
+
+    def _ecs_task_severity(
+        self,
+        last_status: str,
+        desired_status: str,
+        health_status: str | None,
+        stopped_reason: str | None,
+    ) -> str:
+        if stopped_reason or last_status == "STOPPED":
+            return "critical"
+        if desired_status == "RUNNING" and last_status != "RUNNING":
+            return "warning"
+        if health_status and health_status not in {"HEALTHY", "UNKNOWN"}:
+            return "warning"
+        return "ok"
+
+    @staticmethod
+    def _rollup_severity(severities: list[str]) -> str:
+        if "critical" in severities:
+            return "critical"
+        if "warning" in severities:
+            return "warning"
+        return "ok"
+
+    @staticmethod
+    def _chunks(values: list[str], size: int) -> list[list[str]]:
+        return [values[index : index + size] for index in range(0, len(values), size)]
 
     def _trends_forecast_worker(self, account: AwsAccountConfig, days: int) -> dict[str, Any]:
         client = self._client_factory(account).ce()

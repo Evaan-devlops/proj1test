@@ -80,6 +80,45 @@ export type AnalyticsCertificateItem = {
   days_to_expiry: number;
 };
 
+export type AnalyticsEcsSeverity = "ok" | "warning" | "critical";
+
+export type AnalyticsEcsTaskItem = {
+  task_arn: string;
+  task_id: string;
+  last_status: string;
+  desired_status: string;
+  health_status?: string | null;
+  launch_type?: string | null;
+  stopped_reason?: string | null;
+  container_reasons: string[];
+  severity: AnalyticsEcsSeverity;
+};
+
+export type AnalyticsEcsServiceItem = {
+  service_name: string;
+  service_arn: string;
+  status: string;
+  desired_count: number;
+  running_count: number;
+  pending_count: number;
+  launch_type?: string | null;
+  task_definition?: string | null;
+  deployment_status?: string | null;
+  severity: AnalyticsEcsSeverity;
+  insight: string;
+  events: string[];
+  tasks: AnalyticsEcsTaskItem[];
+};
+
+export type AnalyticsEcsClusterItem = {
+  cluster_name: string;
+  cluster_arn?: string | null;
+  status?: string | null;
+  severity: AnalyticsEcsSeverity;
+  insight: string;
+  services: AnalyticsEcsServiceItem[];
+};
+
 export type AnalyticsHubAccountSnapshot = {
   account_key: string;
   account_id: string;
@@ -90,6 +129,7 @@ export type AnalyticsHubAccountSnapshot = {
   service_spend_30d: AnalyticsServiceSpendItem[];
   monthly_cost_trend: AnalyticsMonthlyCostItem[];
   expiring_certificates: AnalyticsCertificateItem[];
+  ecs_clusters: AnalyticsEcsClusterItem[];
 };
 
 export type AnalyticsHubAccountError = {
