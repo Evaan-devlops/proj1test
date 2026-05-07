@@ -182,6 +182,18 @@ export type InlineCompletionResponse = {
   }>;
 };
 
+export type LlmAnswerRequest = {
+  query: string;
+  context: string;
+};
+
+export type LlmAnswerResponse = {
+  answer: string;
+  prompt: string;
+  engine: string;
+  provider_request_id?: string | null;
+};
+
 export type StreamEvent =
   | { type: "start"; userMessage: ChatMessageDto; assistantMessage: ChatMessageDto }
   | { type: "delta"; messageId: string; text: string }

@@ -1,6 +1,6 @@
 # AWS Insights API
 
-FastAPI service for querying AWS cost, budget, forecast, resource, and EC2 idle insights across one or more configured AWS accounts, plus an LLM endpoint that uses VOX OAuth and the Pfizer Vessel OpenAI gateway.
+FastAPI service for querying AWS cost, budget, forecast, resource, and EC2 idle insights across one or more configured AWS accounts, plus an LLM endpoint that uses OAuth and the configured LLM gateway.
 
 ## Features
 
@@ -9,8 +9,8 @@ FastAPI service for querying AWS cost, budget, forecast, resource, and EC2 idle 
 - AWS Budgets lookup by budget name
 - Resource-level cost lookup by Cost Explorer `RESOURCE_ID`
 - EC2 idle detection using CloudWatch CPU and network metrics
-- VOX token generation with client credentials from `.env`
-- LLM question-answer endpoint backed by the Pfizer Vessel OpenAI gateway
+- OAuth token generation with client credentials from `.env`
+- LLM question-answer endpoint backed by the configured LLM gateway
 - JSONL archive of AWS API responses that keeps the 2 most recent calls per endpoint for comparison
 - Persistent chat history in `data/chat_context.jsonl`
 - SSE chat streaming compatible with the frontend chat app
@@ -19,7 +19,7 @@ FastAPI service for querying AWS cost, budget, forecast, resource, and EC2 idle 
 
 - Python 3.12+
 - AWS credentials for each configured account
-- VOX credentials for the LLM endpoint
+- OAuth credentials for the LLM endpoint
 - writable persistent storage for JSONL files when deployed outside local development
 - Access to the AWS APIs used by this app:
   - Cost Explorer
@@ -141,14 +141,14 @@ AWS_ACCOUNT__PROD__SESSION_TOKEN=
 AWS_ACCOUNT__PROD__REGION=us-east-1
 AWS_ACCOUNT__PROD__ACCOUNT_ID=210987654321
 
-VOX_USER=your_vox_user
-VOX_PASSWORD=your_vox_password
-TOKEN_URL=https://devfederate.pfizer.com/as/token.oauth2?grant_type=client_credentials
-VESSEL_OPENAI_API=https://mule4api-comm-amer-dev.pfizer.com/vessel-openai-api-v1/chatCompletion
-VESSEL_OPENAI_PAYLOAD_MODE=model_messages
-VESSEL_OPENAI_ENGINE=gpt-4o-mini
-VESSEL_OPENAI_TEMPERATURE=0.1
-VESSEL_OPENAI_MAX_TOKENS=10000
+OAUTH_CLIENT_ID=your_client_id
+OAUTH_CLIENT_SECRET=your_client_secret
+TOKEN_URL=https://auth.example.com/oauth2/token?grant_type=client_credentials
+LLM_API=https://llm-gateway.example.com/chatCompletion
+LLM_PAYLOAD_MODE=model_messages
+LLM_ENGINE=gpt-4o-mini
+LLM_TEMPERATURE=0.1
+LLM_MAX_TOKENS=10000
 TOKEN_CACHE_MINUTES=20
 TOKEN_REQUEST_TIMEOUT_SECONDS=30
 LLM_REQUEST_TIMEOUT_SECONDS=60
@@ -174,12 +174,12 @@ Notes:
 - `API_RESPONSE_ARCHIVE_FILE` overrides only the AWS archive JSONL path when you need separate control.
 - `CORS_ALLOWED_ORIGINS` should contain the frontend origin in local development and in deployed environments when frontend and backend are on different domains.
 - If frontend and backend are served from the same origin through a reverse proxy, CORS may not be needed, but the current backend supports explicit origins for both local and deployed setups.
-- `VESSEL_OPENAI_ENGINE` is read from `.env` so you can switch models later without code changes.
-- `TOKEN_URL` can keep `grant_type=client_credentials` in the query string. The backend sends only VOX basic auth plus that URL to obtain the token.
-- `VESSEL_OPENAI_PAYLOAD_MODE=model_messages` is the right setting for the Pfizer gateways shown so far, including `.../chatCompletion` and `.../vox-genai-api/completions`.
+- `LLM_ENGINE` is read from `.env` so you can switch models later without code changes.
+- `TOKEN_URL` can keep `grant_type=client_credentials` in the query string. The backend sends only OAuth client authentication plus that URL to obtain the token.
+- `LLM_PAYLOAD_MODE=model_messages` is the right setting for the LLM gateways shown so far, including `.../chatCompletion` and `.../completions`.
 - `TOKEN_CACHE_MINUTES=20` is the fallback token reuse window when the OAuth response does not include a usable `expires_in`.
 - The backend reuses the cached token until it is near expiry instead of regenerating it on every LLM request.
-- The LLM payload is controlled by `VESSEL_OPENAI_PAYLOAD_MODE`: `model_messages` sends `{"model": "...", "messages": [...]}`, while `engine_prompt` sends `{"engine": "...", "prompt": "..."}`.
+- The LLM payload is controlled by `LLM_PAYLOAD_MODE`: `model_messages` sends `{"model": "...", "messages": [...]}`, while `engine_prompt` sends `{"engine": "...", "prompt": "..."}`.
 - `CHAT_RECENT_LIMIT=10` means only the 10 most recently updated chats keep full messages.
 - `CHAT_CONTEXT_MESSAGE_LIMIT=6` means only the most recent 6 messages from the active chat are added as prompt memory.
 - `CHAT_CONTEXT_PROMPT_CHAR_LIMIT=2500` caps chat memory size before it is sent to the LLM.
@@ -339,7 +339,7 @@ Base path: `/api/v1/llm`
 
 ### `POST /answer`
 
-Generates or reuses a cached VOX access token, sends the prompt to the configured LLM gateway, and returns a concise answer.
+Generates or reuses a cached OAuth access token, sends the prompt to the configured LLM gateway, and returns a concise answer.
 
 ```json
 {

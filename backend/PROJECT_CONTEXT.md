@@ -119,8 +119,8 @@ Issue if not applied:
 
 LLM support was added with:
 
-- VOX token generation from `.env`
-- downstream Vessel OpenAI call
+- OAuth token generation from `.env`
+- downstream LLM gateway call
 - LLM answer endpoint
 - LLM health-check endpoint
 

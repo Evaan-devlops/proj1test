@@ -52,7 +52,7 @@ PROJECT_OWNER_TAG_KEYS = {
     "serviceowner",
     "team",
 }
-ECS_INSIGHT_CLUSTER_NAMES = ("test-vsl-ecs-cluster", "dev-vsl-ecs-cluster")
+ECS_INSIGHT_CLUSTER_NAMES = ("test-app-ecs-cluster", "dev-app-ecs-cluster")
 AccountWorker = Callable[[AwsAccountConfig], Any]
 CachedAnalyticsValue = tuple[datetime, Any]
 

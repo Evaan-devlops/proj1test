@@ -26,7 +26,7 @@ async def answer_question(
 @router.get(
     "/health-check",
     response_model=LlmHealthCheckResponse,
-    summary="Verify VOX token generation and downstream LLM connectivity",
+    summary="Verify OAuth token generation and downstream LLM connectivity",
 )
 async def llm_health_check(
     service: LlmService = Depends(get_llm_service),

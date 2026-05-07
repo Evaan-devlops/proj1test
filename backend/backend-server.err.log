@@ -1,0 +1,33 @@
+INFO:     Started server process [11604]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-05-07 20:28:05,645 | ERROR | app.services.aws_service | Analytics Hub snapshot failed for account dev
+Traceback (most recent call last):
+  File "C:\Users\91997\proj1test\backend\app\services\aws_service.py", line 212, in run
+    snapshot = await asyncio.to_thread(self._analytics_account_snapshot_worker, account)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python312\Lib\asyncio\threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\thread.py", line 58, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\91997\proj1test\backend\app\services\aws_service.py", line 257, in _analytics_account_snapshot_worker
+    service_costs = self._service_costs_worker(account, 30)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\91997\proj1test\backend\app\services\aws_service.py", line 250, in _service_costs_worker
+    response = self._get_cost_by_service_response(account, days)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\91997\proj1test\backend\app\services\aws_service.py", line 821, in _get_cost_by_service_response
+    return client.get_cost_and_usage(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python312\Lib\site-packages\botocore\client.py", line 601, in _api_call
+    return self._make_api_call(operation_name, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python312\Lib\site-packages\botocore\context.py", line 123, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python312\Lib\site-packages\botocore\client.py", line 1074, in _make_api_call
+    raise error_class(parsed_response, operation_name)
+botocore.exceptions.ClientError: An error occurred (UnrecognizedClientException) when calling the GetCostAndUsage operation: The security token included in the request is invalid.

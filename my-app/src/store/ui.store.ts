@@ -40,9 +40,9 @@ type UiStore = {
 };
 
 export const useUiStore = create<UiStore>((set) => ({
-  activeView: "chat",
+  activeView: "analytics",
   layoutMode: "single",
-  primaryView: "chat",
+  primaryView: "analytics",
   splitRatio: 0.5,
   floatRatio: 0.42,
   discussionTable: null,
