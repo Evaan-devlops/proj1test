@@ -1161,7 +1161,7 @@ class ChatService:
         matches = ECS_CLUSTER_PATTERN.findall(query_text)
         if matches:
             return list(dict.fromkeys(matches))
-        return ["test-vsl-ecs-cluster", "dev-vsl-ecs-cluster"]
+        return ["test-app-ecs-cluster", "dev-app-ecs-cluster"]
 
     def _extract_service_filter(self, lowered_query: str) -> str | None:
         if "genai" in lowered_query:

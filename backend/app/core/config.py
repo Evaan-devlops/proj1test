@@ -54,23 +54,23 @@ class Settings:
         "GET,POST,PATCH,DELETE,OPTIONS",
     )
     cors_allow_headers_raw: str = os.getenv("CORS_ALLOW_HEADERS", "*")
-    vox_user: str = os.getenv("VOX_USER", "")
-    vox_password: str = os.getenv("VOX_PASSWORD", "")
+    oauth_client_id: str = os.getenv("OAUTH_CLIENT_ID", "")
+    oauth_client_secret: str = os.getenv("OAUTH_CLIENT_SECRET", "")
     token_url: str = os.getenv(
         "TOKEN_URL",
-        "https://devfederate.pfizer.com/as/token.oauth2?grant_type=client_credentials",
+        "https://auth.example.com/oauth2/token?grant_type=client_credentials",
     )
-    vessel_openai_api: str = os.getenv(
-        "VESSEL_OPENAI_API",
-        "https://mule4api-comm-amer-dev.pfizer.com/vessel-openai-api-v1/chatCompletion",
+    llm_api: str = os.getenv(
+        "LLM_API",
+        "https://llm-gateway.example.com/chatCompletion",
     )
-    vessel_openai_payload_mode: str = os.getenv(
-        "VESSEL_OPENAI_PAYLOAD_MODE",
+    llm_payload_mode: str = os.getenv(
+        "LLM_PAYLOAD_MODE",
         "model_messages",
     ).strip().lower()
-    vessel_openai_engine: str = os.getenv("VESSEL_OPENAI_ENGINE", "gpt-4o-mini")
-    vessel_openai_temperature: float = float(os.getenv("VESSEL_OPENAI_TEMPERATURE", "0.1"))
-    vessel_openai_max_tokens: int = int(os.getenv("VESSEL_OPENAI_MAX_TOKENS", "10000"))
+    llm_engine: str = os.getenv("LLM_ENGINE", "gpt-4o-mini")
+    llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+    llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "10000"))
     token_cache_minutes: int = int(os.getenv("TOKEN_CACHE_MINUTES", "20"))
     token_request_timeout_seconds: float = float(
         os.getenv("TOKEN_REQUEST_TIMEOUT_SECONDS", "30")
@@ -113,11 +113,11 @@ class Settings:
         missing = [
             name
             for name, value in (
-                ("VOX_USER", self.vox_user),
-                ("VOX_PASSWORD", self.vox_password),
+                ("OAUTH_CLIENT_ID", self.oauth_client_id),
+                ("OAUTH_CLIENT_SECRET", self.oauth_client_secret),
                 ("TOKEN_URL", self.token_url),
-                ("VESSEL_OPENAI_API", self.vessel_openai_api),
-                ("VESSEL_OPENAI_ENGINE", self.vessel_openai_engine),
+                ("LLM_API", self.llm_api),
+                ("LLM_ENGINE", self.llm_engine),
             )
             if not value
         ]

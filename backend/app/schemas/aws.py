@@ -105,7 +105,7 @@ class EcsInsightRequest(AwsSchemaBase):
         examples=[["dev"]],
     )
     cluster_names: list[str] = Field(
-        default_factory=lambda: ["test-vsl-ecs-cluster", "dev-vsl-ecs-cluster"],
+        default_factory=lambda: ["test-app-ecs-cluster", "dev-app-ecs-cluster"],
         min_length=1,
         description="ECS cluster names to inspect.",
     )

@@ -14,6 +14,8 @@ import type {
   InlineCompletionResponse,
   ListChatsResponse,
   ListMessagesResponse,
+  LlmAnswerRequest,
+  LlmAnswerResponse,
   RenameChatRequest,
   RenameChatResponse,
   RerunStreamRequest,
@@ -28,6 +30,7 @@ import {
   isInlineCompletionResponse,
   isListChatsResponse,
   isListMessagesResponse,
+  isLlmAnswerResponse,
   isRenameChatResponse,
 } from "./guards";
 
@@ -192,6 +195,18 @@ export const chatApi = {
       },
       isInlineCompletionResponse,
       "Inline completion response had an unexpected format.",
+    );
+  },
+
+  answerWithContext(body: LlmAnswerRequest) {
+    return requestValidated<LlmAnswerResponse>(
+      "/api/v1/llm/answer",
+      {
+        method: "POST",
+        body,
+      },
+      isLlmAnswerResponse,
+      "LLM answer response had an unexpected format.",
     );
   },
 };

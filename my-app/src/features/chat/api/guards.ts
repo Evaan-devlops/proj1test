@@ -21,6 +21,7 @@ import type {
   InlineCompletionResponse,
   ListChatsResponse,
   ListMessagesResponse,
+  LlmAnswerResponse,
   RenameChatResponse,
 } from "./types";
 
@@ -247,4 +248,14 @@ export function isInlineCompletionResponse(value: unknown): value is InlineCompl
       (item.score === undefined || isNumber(item.score))
     );
   });
+}
+
+export function isLlmAnswerResponse(value: unknown): value is LlmAnswerResponse {
+  if (!isRecord(value)) return false;
+  return (
+    isString(value.answer) &&
+    isString(value.prompt) &&
+    isString(value.engine) &&
+    isNullableString(value.provider_request_id)
+  );
 }

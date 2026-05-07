@@ -5,6 +5,7 @@ import AccountsSidebar from "src/features/chat/components/AccountsSidebar";
 import BottomErrorBanner from "src/components/BottomErrorBanner";
 import AnalyticsHub from "src/pages/AnalyticsHub";
 import { chatApi } from "src/features/chat/api/chatApi";
+import { useAppConfigStore } from "src/store/appConfig.store";
 import { useChatStore } from "src/store/chat.store";
 import { useUiStore, type AppView, type DiscussionTableContext } from "src/store/ui.store";
 
@@ -397,6 +398,7 @@ export default function AppShell() {
   const loadAccounts = useChatStore((s) => s.loadAccounts);
   const lastError = useChatStore((s) => s.lastError);
   const clearError = useChatStore((s) => s.clearError);
+  const useMockData = useAppConfigStore((s) => s.useMockData);
   const shellRef = useRef<HTMLDivElement | null>(null);
 
   const isSingleChatView = layoutMode === "single" && activeView === "chat";
@@ -404,12 +406,17 @@ export default function AppShell() {
 
   useEffect(() => {
     void hydrateChats();
+    if (useMockData) {
+      clearError();
+      return;
+    }
     void loadAccounts();
-  }, [hydrateChats, loadAccounts]);
+  }, [clearError, hydrateChats, loadAccounts, useMockData]);
 
   useEffect(() => {
+    if (useMockData) return;
     void chatApi.refreshAnalyticsHubSnapshot();
-  }, []);
+  }, [useMockData]);
 
   function startSplitResize(event: React.PointerEvent<HTMLDivElement>) {
     const shell = shellRef.current;
@@ -625,7 +632,7 @@ export default function AppShell() {
       </div>
 
       {isSingleChatView ? <AccountsSidebar /> : null}
-      {lastError ? <BottomErrorBanner message={lastError} onDismiss={clearError} /> : null}
+      {lastError && !useMockData ? <BottomErrorBanner message={lastError} onDismiss={clearError} /> : null}
     </div>
   );
 }

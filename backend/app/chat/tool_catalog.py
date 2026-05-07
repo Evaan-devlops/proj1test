@@ -169,8 +169,8 @@ AWS_TOOL_CATALOG: tuple[AwsToolDefinition, ...] = (
             "stopped task",
             "deployment status",
             "genai service",
-            "test-vsl-ecs-cluster",
-            "dev-vsl-ecs-cluster",
+            "test-app-ecs-cluster",
+            "dev-app-ecs-cluster",
         ),
     ),
 )
