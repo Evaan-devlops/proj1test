@@ -7,7 +7,7 @@ Vite + React + TypeScript frontend for the AWS chat app.
 - Node.js 20+
 - npm 10+
 - the full `my-app` folder copied as-is
-- for real backend mode, the FastAPI backend running on `http://localhost:8000`
+- for real backend mode, access to the backend at `https://aws_analytics.shaktisinha.org/`
 
 The frontend supports 2 modes:
 
@@ -37,7 +37,7 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-7. Open the local URL shown by Vite, usually `http://localhost:5173`.
+7. Open the local URL shown by Vite, usually `http://localhost:5173`. The deployed frontend URL is `https://analytics.shaktisinha.org/`.
 
 ## Frontend-Only Demo Mode
 
@@ -61,12 +61,12 @@ Use this in `.env.local`:
 
 ```env
 VITE_USE_FAKE_BACKEND=false
-VITE_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=https://aws_analytics.shaktisinha.org/
 ```
 
-Then start the backend and the frontend separately.
+Then start the frontend.
 
-Backend:
+If you need to run a local backend instead:
 
 ```powershell
 cd ..\backend
@@ -91,11 +91,11 @@ In real backend mode:
 - the selected accounts are sent with each chat request
 - only backend-configured accounts with valid credentials appear in the UI
 
-For deployed environments, replace `http://localhost:8000` with your real backend URL, for example:
+For deployed environments, set `VITE_API_BASE_URL` to the backend URL:
 
 ```env
 VITE_USE_FAKE_BACKEND=false
-VITE_API_BASE_URL=https://api.your-domain.example.com
+VITE_API_BASE_URL=https://aws_analytics.shaktisinha.org/
 ```
 
 If your backend `.env` contains:
@@ -146,9 +146,9 @@ If VS Code shows many TypeScript errors after copying:
 
 If the frontend opens but no real data appears:
 
-1. Confirm backend is running on `http://localhost:8000`.
+1. Confirm `.env.local` contains `VITE_API_BASE_URL=https://aws_analytics.shaktisinha.org/`.
 2. Confirm `.env.local` contains `VITE_USE_FAKE_BACKEND=false`.
-3. Confirm backend responds at `http://localhost:8000/api/health`.
+3. Confirm backend responds at `https://aws_analytics.shaktisinha.org/api/health`.
 4. Confirm backend `.env` has `AWS_ACCOUNT_KEYS` and matching AWS credential variables.
 
 ## Notes
