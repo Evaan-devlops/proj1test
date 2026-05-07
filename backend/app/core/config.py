@@ -47,7 +47,7 @@ class Settings:
     chat_context_prompt_char_limit: int = int(os.getenv("CHAT_CONTEXT_PROMPT_CHAR_LIMIT", "2500"))
     cors_allowed_origins_raw: str = os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+        "https://analytics.shaktisinha.org,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
     )
     cors_allow_methods_raw: str = os.getenv(
         "CORS_ALLOW_METHODS",

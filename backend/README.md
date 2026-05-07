@@ -102,7 +102,7 @@ Real backend mode:
 
 ```env
 VITE_USE_FAKE_BACKEND=false
-VITE_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=https://aws_analytics.shaktisinha.org/
 ```
 
 3. Start the frontend:
@@ -158,7 +158,7 @@ API_RESPONSE_ARCHIVE_FILE=data/api_response_archive.jsonl
 CHAT_RECENT_LIMIT=10
 CHAT_CONTEXT_MESSAGE_LIMIT=6
 CHAT_CONTEXT_PROMPT_CHAR_LIMIT=2500
-CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+CORS_ALLOWED_ORIGINS=https://analytics.shaktisinha.org
 CORS_ALLOW_METHODS=GET,POST,PATCH,DELETE,OPTIONS
 CORS_ALLOW_HEADERS=*
 ```
@@ -227,7 +227,7 @@ APP_DATA_DIR=/mnt/app-data/aws-insights
 CHAT_CONTEXT_FILE=/mnt/app-data/aws-insights/chat_context.jsonl
 API_RESPONSE_ARCHIVE_FILE=/mnt/app-data/aws-insights/api_response_archive.jsonl
 
-CORS_ALLOWED_ORIGINS=https://your-frontend.example.com
+CORS_ALLOWED_ORIGINS=https://analytics.shaktisinha.org
 ```
 
 If you run more than one backend instance:
