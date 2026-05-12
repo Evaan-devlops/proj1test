@@ -13,6 +13,14 @@ function ChevronIcon({ open }: { open: boolean }) {
   );
 }
 
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
+      <path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z" />
+    </svg>
+  );
+}
+
 export default function AccountsSidebar() {
   const [open, setOpen] = useState(true);
   const availableAccountKeys = useChatStore((s) => s.availableAccountKeys);
@@ -38,6 +46,12 @@ export default function AccountsSidebar() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-sm font-semibold tracking-[0.18em] text-white/55 uppercase">Accounts</div>
+                {selectedAccountKeys.length > 0 ? (
+                  <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/12 px-2.5 py-1 text-xs font-semibold text-emerald-100">
+                    <CheckIcon />
+                    AWS connected
+                  </div>
+                ) : null}
               </div>
 
               <button
@@ -76,6 +90,12 @@ export default function AccountsSidebar() {
                       className="h-4 w-4 rounded border-white/30 bg-transparent text-white accent-white"
                     />
                     <span className="text-sm text-white/90">{accountKey.toUpperCase()}</span>
+                    {selectedAccountKeys.includes(accountKey) ? (
+                      <span className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-emerald-200">
+                        <CheckIcon />
+                        Connected
+                      </span>
+                    ) : null}
                   </label>
                 ))
               )}

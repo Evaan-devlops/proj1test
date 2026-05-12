@@ -14,9 +14,11 @@ from app.core.config import settings
 from app.schemas.aws import (
     AwsAccountsRequest,
     BudgetRequest,
+    CertificateExpiryRequest,
     CostBreakdownRequest,
     Ec2IdleRequest,
     EcsInsightRequest,
+    IdleResourcesRequest,
     ResourceCostRequest,
 )
 from app.schemas.chat import (
@@ -32,6 +34,7 @@ from app.services.archive_service import ApiResponseArchiveService
 from app.services.aws_service import AwsInsightsService
 from app.services.chat_store_service import ChatLastToolContext, ChatStoreService
 from app.services.llm_service import LlmService
+from app.services.tool_routing_service import ToolRoutingService
 
 
 DEFAULT_COST_DAYS = 180
@@ -98,6 +101,7 @@ class ChatService:
         self.archive_service = archive_service or ApiResponseArchiveService()
         self.tool_catalog = get_aws_tool_catalog()
         self._tool_by_name_map = {tool.tool_name: tool for tool in self.tool_catalog}
+        self.tool_router = ToolRoutingService(tool_catalog=self.tool_catalog)
         self.available_account_keys = tuple(settings.get_aws_accounts().keys())
         self._tool_executor_map = {
             "accounts": self._execute_accounts_tool,
@@ -107,7 +111,9 @@ class ChatService:
             "trends_forecast": self._execute_trends_forecast_tool,
             "budget": self._execute_budget_tool,
             "resource_cost": self._execute_resource_cost_tool,
+            "idle_resources": self._execute_idle_resources_tool,
             "ec2_idle_check": self._execute_ec2_idle_check_tool,
+            "certificate_expiry": self._execute_certificate_expiry_tool,
             "ecs_insights": self._execute_ecs_insights_tool,
         }
 
@@ -267,7 +273,7 @@ class ChatService:
             if route_decision.tool is None:
                 final_text = (
                     "I could not determine which AWS backend API to use for that request. "
-                    "Try asking about total cost, top costly services, trends, budget, resource cost, or idle EC2 instances."
+                    "Try asking about total cost, top costly services, trends, budget, resource cost, idle resources, certificates, or ECS services."
                 )
                 self.chat_store.update_assistant_message(
                     chat_id=chat_id,
@@ -404,17 +410,20 @@ class ChatService:
         ):
             return RouteDecision(tool=self._tool_by_name("accounts"), reason="matched account listing rule")
 
-        route_from_rules = self._route_from_rules(lowered_query)
-        if route_from_rules is not None:
-            follow_up = self._follow_up_if_missing(route_from_rules, query_context)
+        route_score = self.tool_router.select_tool(
+            query_text=query_text,
+            query_context=query_context,
+        )
+        if route_score is not None:
+            follow_up = self._follow_up_if_missing(route_score.tool, query_context)
             if follow_up:
                 return RouteDecision(
-                    tool=route_from_rules,
-                    reason="matched deterministic routing rule",
+                    tool=route_score.tool,
+                    reason=route_score.reason(),
                     needs_follow_up=True,
                     follow_up_message=follow_up,
                 )
-            return RouteDecision(tool=route_from_rules, reason="matched deterministic routing rule")
+            return RouteDecision(tool=route_score.tool, reason=route_score.reason())
 
         if last_tool_context is not None and self._looks_like_follow_up(query_text):
             fallback_tool = self._tool_by_name(last_tool_context.tool_name)
@@ -450,24 +459,6 @@ class ChatService:
             return RouteDecision(tool=tool, reason="LLM planner selected tool")
         except Exception:
             return RouteDecision(tool=None, reason="routing fallback failed")
-
-    def _route_from_rules(self, lowered_query: str) -> AwsToolDefinition | None:
-        scored_tools: list[tuple[int, AwsToolDefinition]] = []
-        for tool in self.tool_catalog:
-            score = sum(1 for phrase in tool.trigger_phrases if phrase in lowered_query)
-            if tool.tool_name == "resource_cost" and self._extract_resource_id(lowered_query):
-                score += 2
-            if tool.tool_name == "ec2_idle_check" and self._extract_instance_ids(lowered_query):
-                score += 2
-            if tool.tool_name == "ecs_insights" and ECS_CLUSTER_PATTERN.search(lowered_query):
-                score += 2
-            if score > 0:
-                scored_tools.append((score, tool))
-
-        if not scored_tools:
-            return None
-        scored_tools.sort(key=lambda item: item[0], reverse=True)
-        return scored_tools[0][1]
 
     async def _execute_tool(
         self,
@@ -543,6 +534,23 @@ class ChatService:
                 days=query_context.days,
                 instance_ids=query_context.instance_ids,
                 idle_days=query_context.idle_days,
+            )
+        )
+
+    async def _execute_idle_resources_tool(self, query_context: QueryContext) -> dict[str, Any]:
+        return await self.aws_service.get_idle_resources(
+            IdleResourcesRequest(
+                account_keys=query_context.account_keys,
+                days=query_context.days,
+                idle_days=query_context.idle_days,
+            )
+        )
+
+    async def _execute_certificate_expiry_tool(self, query_context: QueryContext) -> dict[str, Any]:
+        return await self.aws_service.get_certificate_expiry(
+            CertificateExpiryRequest(
+                account_keys=query_context.account_keys,
+                days=query_context.days,
             )
         )
 
@@ -722,6 +730,44 @@ class ChatService:
                 f"EC2 idle check for account `{account_key}`.\n\n"
                 f"{self._markdown_table(['Instance ID', 'CPU Idle', 'Network Idle', 'Idle'], rows) if rows else 'No EC2 instance rows were returned.'}\n\n"
                 f"Idle EC2 instances: {', '.join(idle_instances) if idle_instances else 'none'}."
+            )
+
+        if tool.tool_name == "idle_resources":
+            resources = data.get("resources", [])
+            rows = [
+                [
+                    item.get("resource_type", "-"),
+                    item.get("resource_id", "-"),
+                    item.get("severity", "-"),
+                    item.get("signal", "-"),
+                    item.get("implication", "-"),
+                    item.get("suggested_action", "-"),
+                ]
+                for item in resources[:10]
+            ]
+            critical = [item.get("resource_id") for item in resources if item.get("severity") == "critical"]
+            return (
+                f"Idle resource analysis for account `{account_key}`.\n\n"
+                f"{self._markdown_table(['Type', 'Resource', 'Severity', 'Signal', 'Implication', 'Action'], rows) if rows else 'No idle or underused resources were returned.'}\n\n"
+                f"Critical candidates: {', '.join(critical) if critical else 'none'}."
+            )
+
+        if tool.tool_name == "certificate_expiry":
+            certificates = data.get("certificates", [])
+            rows = [
+                [
+                    item.get("domain_name", "-"),
+                    item.get("expiry_date", "-"),
+                    item.get("days_to_expiry", "-"),
+                    item.get("certificate_arn", "-"),
+                ]
+                for item in certificates[:10]
+            ]
+            urgent = [item.get("domain_name") for item in certificates if int(item.get("days_to_expiry") or 9999) < 30]
+            return (
+                f"Certificate expiry review for account `{account_key}`.\n\n"
+                f"{self._markdown_table(['Domain', 'Expiry Date', 'Days Left', 'Certificate ARN'], rows) if rows else 'No certificates are expiring in the requested window.'}\n\n"
+                f"Urgent renewals: {', '.join(urgent) if urgent else 'none'}."
             )
 
         if tool.tool_name == "ecs_insights":
@@ -1010,7 +1056,7 @@ class ChatService:
         if lowered in {"hi", "hello", "hey", "good morning", "good afternoon", "good evening", "hiya", "yo"}:
             return (
                 "Hi. I can help with AWS cost totals, top services, spend trends, budgets, "
-                "resource cost, and EC2 idle checks."
+                "resource cost, idle resources, certificate expiry, and ECS health."
             )
 
         if lowered in {"thanks", "thank you", "thx", "ok thanks", "great thanks"}:
@@ -1019,7 +1065,8 @@ class ChatService:
         if lowered in {"help", "what can you do", "what do you do", "how can you help"}:
             return (
                 "I can answer AWS-focused questions about total cost, cost breakdown, detailed "
-                "service spend, trends and forecast, named budgets, resource cost, and EC2 idle checks."
+                "service spend, trends and forecast, named budgets, resource cost, idle resources, "
+                "certificate expiry, and ECS service health."
             )
 
         return None

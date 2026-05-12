@@ -20,10 +20,12 @@ from app.schemas.aws import (
     AccountSuccess,
     AwsAccountsRequest,
     BudgetRequest,
+    CertificateExpiryRequest,
     CostBreakdownRequest,
     Ec2IdleRequest,
     EcsInsightRequest,
     IdleStatusItem,
+    IdleResourcesRequest,
     ResourceCostRequest,
 )
 from app.services.aws_clients import AwsClientFactory
@@ -34,6 +36,13 @@ logger = logging.getLogger(__name__)
 
 AWS_COST_METRIC = "UnblendedCost"
 AWS_MONTHLY_GRANULARITY = "MONTHLY"
+ANALYTICS_TABLE_FIELDS = {
+    "accounts": {"project_name", "project_owner"},
+    "financial": {"total_cost_30d", "service_spend_30d", "monthly_cost_trend", "project_name", "project_owner"},
+    "certificates": {"expiring_certificates"},
+    "utilization": {"ecs_clusters"},
+    "idle": {"idle_resources"},
+}
 PROJECT_NAME_TAG_KEYS = {
     "application",
     "applicationname",
@@ -190,6 +199,18 @@ class AwsInsightsService:
             lambda account: self._ec2_idle_worker(account, payload),
         )
 
+    async def get_idle_resources(self, payload: IdleResourcesRequest) -> dict[str, Any]:
+        return await self._run_for_accounts(
+            payload.account_keys,
+            lambda account: self._idle_resources_worker(account, payload),
+        )
+
+    async def get_certificate_expiry(self, payload: CertificateExpiryRequest) -> dict[str, Any]:
+        return await self._run_for_accounts(
+            payload.account_keys,
+            lambda account: {"certificates": self._acm_expiry_worker(account, payload.days)},
+        )
+
     async def get_ecs_insights(self, payload: EcsInsightRequest) -> dict[str, Any]:
         return await self._run_for_accounts(
             payload.account_keys,
@@ -213,6 +234,46 @@ class AwsInsightsService:
                     return snapshot, None
                 except (ClientError, BotoCoreError, ValueError) as exc:
                     logger.exception("Analytics Hub snapshot failed for account %s", account.key)
+                    return None, {
+                        "account_key": account.key,
+                        "account_id": account.account_id,
+                        "region": account.region,
+                        "error": str(exc),
+                    }
+
+        results = await asyncio.gather(*(run(account) for account in accounts))
+        snapshots = [item for item, _ in results if item is not None]
+        errors = [error for _, error in results if error is not None]
+        return {
+            "generated_at_utc": datetime.now(UTC).isoformat(),
+            "account_count": len(snapshots),
+            "accounts": snapshots,
+            "errors": errors,
+        }
+
+    async def build_analytics_hub_table_snapshot(self, table_key: str) -> dict[str, Any]:
+        normalized_table_key = table_key.strip().lower()
+        if normalized_table_key == "all":
+            return await self.build_analytics_hub_snapshot()
+        if normalized_table_key not in ANALYTICS_TABLE_FIELDS:
+            raise ValueError(
+                "Unsupported Analytics Hub table refresh. Use all, accounts, financial, certificates, utilization, or idle."
+            )
+
+        accounts = self._resolve_accounts(None)
+        semaphore = asyncio.Semaphore(settings.max_parallel_accounts)
+
+        async def run(account: AwsAccountConfig) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+            async with semaphore:
+                try:
+                    snapshot = await asyncio.to_thread(
+                        self._analytics_account_table_snapshot_worker,
+                        account,
+                        normalized_table_key,
+                    )
+                    return snapshot, None
+                except (ClientError, BotoCoreError, ValueError) as exc:
+                    logger.exception("Analytics Hub %s refresh failed for account %s", normalized_table_key, account.key)
                     return None, {
                         "account_key": account.key,
                         "account_id": account.account_id,
@@ -262,16 +323,13 @@ class AwsInsightsService:
         ecs_clusters = self._ecs_insights_worker(account)
 
         sorted_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)
-        top_service_rows = [
+        service_rows = [
             {
                 "service": service,
                 "cost": round(cost, 2),
             }
-            for service, cost in sorted_services[:10]
+            for service, cost in sorted_services
         ]
-        other_cost = round(sum(cost for _, cost in sorted_services[10:]), 2)
-        if other_cost > 0:
-            top_service_rows.append({"service": "Other", "cost": other_cost})
 
         return {
             "account_key": account.key,
@@ -280,11 +338,59 @@ class AwsInsightsService:
             "project_name": project_metadata["project_name"],
             "project_owner": project_metadata["project_owner"],
             "total_cost_30d": total_cost,
-            "service_spend_30d": top_service_rows,
+            "service_spend_30d": service_rows,
             "monthly_cost_trend": monthly_cost_trend,
             "expiring_certificates": expiring_certificates,
             "ecs_clusters": ecs_clusters,
+            "idle_resources": self._idle_resources_worker(account, IdleResourcesRequest(max_resources=50))["resources"],
         }
+
+    def _analytics_account_base_snapshot(self, account: AwsAccountConfig) -> dict[str, Any]:
+        resolved = self._ensure_account_id(account)
+        return {
+            "account_key": resolved.key,
+            "account_id": resolved.account_id,
+            "region": resolved.region,
+        }
+
+    def _analytics_account_table_snapshot_worker(self, account: AwsAccountConfig, table_key: str) -> dict[str, Any]:
+        base = self._analytics_account_base_snapshot(account)
+        if table_key == "accounts":
+            project_metadata = self._project_metadata_worker(account)
+            return {
+                **base,
+                "project_name": project_metadata["project_name"],
+                "project_owner": project_metadata["project_owner"],
+            }
+        if table_key == "financial":
+            service_costs = self._service_costs_worker(account, 30)
+            sorted_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)
+            service_rows = [{"service": service, "cost": round(cost, 2)} for service, cost in sorted_services]
+            project_metadata = self._project_metadata_worker(account)
+            return {
+                **base,
+                "project_name": project_metadata["project_name"],
+                "project_owner": project_metadata["project_owner"],
+                "total_cost_30d": round(sum(service_costs.values()), 2),
+                "service_spend_30d": service_rows,
+                "monthly_cost_trend": self._monthly_cost_trend_worker(account, 180),
+            }
+        if table_key == "certificates":
+            return {
+                **base,
+                "expiring_certificates": self._acm_expiry_worker(account, 90),
+            }
+        if table_key == "utilization":
+            return {
+                **base,
+                "ecs_clusters": self._ecs_insights_worker(account),
+            }
+        if table_key == "idle":
+            return {
+                **base,
+                "idle_resources": self._idle_resources_worker(account, IdleResourcesRequest(max_resources=50))["resources"],
+            }
+        raise ValueError(f"Unsupported Analytics Hub table key: {table_key}")
 
     def _ecs_insights_worker(
         self,
@@ -292,11 +398,13 @@ class AwsInsightsService:
         cluster_names: list[str] | None = None,
         service_filter: str | None = None,
     ) -> list[dict[str, Any]]:
-        client = self._client_factory(account).ecs()
+        factory = self._client_factory(account)
+        client = factory.ecs()
+        cloudwatch = factory.cloudwatch()
         clusters: list[dict[str, Any]] = []
 
         for cluster_name in cluster_names or list(ECS_INSIGHT_CLUSTER_NAMES):
-            cluster = self._ecs_cluster_snapshot(client, cluster_name, service_filter=service_filter)
+            cluster = self._ecs_cluster_snapshot(client, cloudwatch, cluster_name, service_filter=service_filter)
             clusters.append(cluster)
 
         return clusters
@@ -304,6 +412,7 @@ class AwsInsightsService:
     def _ecs_cluster_snapshot(
         self,
         client: Any,
+        cloudwatch: Any,
         cluster_name: str,
         service_filter: str | None = None,
     ) -> dict[str, Any]:
@@ -330,7 +439,7 @@ class AwsInsightsService:
                 service_name = service.get("serviceName") or service.get("serviceArn", "").rsplit("/", 1)[-1]
                 if service_filter and service_filter.lower() not in service_name.lower():
                     continue
-                services.append(self._ecs_service_snapshot(client, cluster_arn, service))
+                services.append(self._ecs_service_snapshot(client, cloudwatch, cluster_arn, service))
 
         cluster_severity = self._rollup_severity([service["severity"] for service in services])
         if not services:
@@ -351,7 +460,7 @@ class AwsInsightsService:
             service_arns.extend(page.get("serviceArns", []))
         return service_arns
 
-    def _ecs_service_snapshot(self, client: Any, cluster_arn: str, service: dict[str, Any]) -> dict[str, Any]:
+    def _ecs_service_snapshot(self, client: Any, cloudwatch: Any, cluster_arn: str, service: dict[str, Any]) -> dict[str, Any]:
         service_arn = service.get("serviceArn", "")
         service_name = service.get("serviceName") or service_arn.rsplit("/", 1)[-1]
         desired_count = int(service.get("desiredCount") or 0)
@@ -370,6 +479,13 @@ class AwsInsightsService:
         ]
         tasks = self._ecs_service_tasks(client, cluster_arn, service_name)
         task_severity = self._rollup_severity([task["severity"] for task in tasks])
+        metrics = self._ecs_service_utilization_metrics(cloudwatch, cluster_arn, service_name)
+        utilization_percent = self._ecs_utilization_percent(
+            desired_count=desired_count,
+            running_count=running_count,
+            cpu_average_percent=metrics["cpu_average_percent"],
+            memory_average_percent=metrics["memory_average_percent"],
+        )
         service_severity = self._ecs_service_severity(
             status=status,
             desired_count=desired_count,
@@ -377,6 +493,21 @@ class AwsInsightsService:
             pending_count=pending_count,
             deployment_status=deployment_status,
             task_severity=task_severity,
+        )
+        utilization_status = self._ecs_utilization_status(utilization_percent, service_severity)
+        insight = self._ecs_service_insight(
+            status=status,
+            desired_count=desired_count,
+            running_count=running_count,
+            pending_count=pending_count,
+            deployment_status=deployment_status,
+        )
+        reason = self._ecs_utilization_reason(
+            utilization_status=utilization_status,
+            insight=insight,
+            events=events,
+            tasks=tasks,
+            metrics=metrics,
         )
 
         return {
@@ -386,20 +517,159 @@ class AwsInsightsService:
             "desired_count": desired_count,
             "running_count": running_count,
             "pending_count": pending_count,
+            "utilization_percent": utilization_percent,
+            "utilization_status": utilization_status,
+            "cpu_average_percent": metrics["cpu_average_percent"],
+            "memory_average_percent": metrics["memory_average_percent"],
             "launch_type": launch_type,
             "task_definition": task_definition,
             "deployment_status": deployment_status,
             "severity": service_severity,
-            "insight": self._ecs_service_insight(
-                status=status,
-                desired_count=desired_count,
-                running_count=running_count,
-                pending_count=pending_count,
-                deployment_status=deployment_status,
-            ),
+            "insight": insight,
+            "reason": reason,
+            "solution": self._ecs_utilization_solution(utilization_status, service_severity),
+            "console_url": self._ecs_console_url(cluster_arn, service_name),
             "events": events,
             "tasks": tasks,
         }
+
+    def _ecs_service_utilization_metrics(self, cloudwatch: Any, cluster_arn: str, service_name: str) -> dict[str, float | None]:
+        _, _, cluster_name = self._parse_ecs_cluster_arn(cluster_arn)
+        if not cluster_name:
+            return {"cpu_average_percent": None, "memory_average_percent": None}
+
+        end_time = datetime.now(UTC)
+        start_time = end_time - timedelta(hours=3)
+
+        return {
+            "cpu_average_percent": self._ecs_average_metric(
+                cloudwatch,
+                metric_name="CPUUtilization",
+                cluster_name=cluster_name,
+                service_name=service_name,
+                start_time=start_time,
+                end_time=end_time,
+            ),
+            "memory_average_percent": self._ecs_average_metric(
+                cloudwatch,
+                metric_name="MemoryUtilization",
+                cluster_name=cluster_name,
+                service_name=service_name,
+                start_time=start_time,
+                end_time=end_time,
+            ),
+        }
+
+    def _ecs_average_metric(
+        self,
+        cloudwatch: Any,
+        *,
+        metric_name: str,
+        cluster_name: str,
+        service_name: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> float | None:
+        try:
+            response = cloudwatch.get_metric_statistics(
+                Namespace="AWS/ECS",
+                MetricName=metric_name,
+                Dimensions=[
+                    {"Name": "ClusterName", "Value": cluster_name},
+                    {"Name": "ServiceName", "Value": service_name},
+                ],
+                StartTime=start_time,
+                EndTime=end_time,
+                Period=300,
+                Statistics=["Average"],
+            )
+        except (ClientError, BotoCoreError):
+            return None
+
+        datapoints = [float(item["Average"]) for item in response.get("Datapoints", []) if "Average" in item]
+        if not datapoints:
+            return None
+        return round(sum(datapoints) / len(datapoints), 1)
+
+    @staticmethod
+    def _ecs_utilization_percent(
+        *,
+        desired_count: int,
+        running_count: int,
+        cpu_average_percent: float | None,
+        memory_average_percent: float | None,
+    ) -> float:
+        metric_values = [value for value in (cpu_average_percent, memory_average_percent) if value is not None]
+        if metric_values:
+            return round(max(metric_values), 1)
+        if desired_count <= 0:
+            return 0.0
+        return round((running_count / desired_count) * 100, 1)
+
+    @staticmethod
+    def _ecs_utilization_status(utilization_percent: float, severity: str) -> str:
+        if severity == "critical":
+            return "overused"
+        if utilization_percent >= 85:
+            return "overused"
+        if utilization_percent <= 30:
+            return "underused"
+        return "balanced"
+
+    @staticmethod
+    def _ecs_utilization_reason(
+        *,
+        utilization_status: str,
+        insight: str,
+        events: list[str],
+        tasks: list[dict[str, Any]],
+        metrics: dict[str, float | None],
+    ) -> str:
+        failed_reasons = [
+            task.get("stopped_reason") or ", ".join(task.get("container_reasons", []))
+            for task in tasks
+            if task.get("severity") != "ok"
+        ]
+        failed_reasons = [item for item in failed_reasons if item]
+        if failed_reasons:
+            return failed_reasons[0]
+        if events:
+            return events[0]
+        cpu = metrics.get("cpu_average_percent")
+        memory = metrics.get("memory_average_percent")
+        if utilization_status == "overused":
+            return f"Recent service load is high. CPU average: {cpu if cpu is not None else 'n/a'}%, memory average: {memory if memory is not None else 'n/a'}%."
+        if utilization_status == "underused":
+            return f"Recent service load is low. CPU average: {cpu if cpu is not None else 'n/a'}%, memory average: {memory if memory is not None else 'n/a'}%."
+        return insight
+
+    @staticmethod
+    def _ecs_utilization_solution(utilization_status: str, severity: str) -> str:
+        if severity == "critical":
+            return "Open ECS service events and failed tasks, fix placement/deployment errors, then rerun the service deployment."
+        if utilization_status == "overused":
+            return "Scale desired count or task CPU/memory, review target tracking policies, and validate downstream throttling."
+        if utilization_status == "underused":
+            return "Consider lowering desired count, right-sizing task CPU/memory, or tightening autoscaling minimum capacity."
+        return "Keep current capacity and monitor CPU, memory, and pending task trends."
+
+    @staticmethod
+    def _parse_ecs_cluster_arn(cluster_arn: str) -> tuple[str | None, str, str | None]:
+        parts = cluster_arn.split(":")
+        region = parts[3] if len(parts) > 3 and parts[3] else "us-east-1"
+        account_id = parts[4] if len(parts) > 4 else None
+        cluster_name = cluster_arn.rsplit("/", 1)[-1] if "/" in cluster_arn else None
+        return account_id, region, cluster_name
+
+    @staticmethod
+    def _ecs_console_url(cluster_arn: str, service_name: str) -> str | None:
+        _, region, cluster_name = AwsInsightsService._parse_ecs_cluster_arn(cluster_arn)
+        if not cluster_name or not service_name:
+            return None
+        return (
+            f"https://{region}.console.aws.amazon.com/ecs/v2/clusters/"
+            f"{cluster_name}/services/{service_name}/health?region={region}"
+        )
 
     def _ecs_service_tasks(self, client: Any, cluster_arn: str, service_name: str) -> list[dict[str, Any]]:
         task_arns: list[str] = []
@@ -531,6 +801,22 @@ class AwsInsightsService:
     def _chunks(values: list[str], size: int) -> list[list[str]]:
         return [values[index : index + size] for index in range(0, len(values), size)]
 
+    @staticmethod
+    def _severity_rank(severity: str) -> int:
+        return {"critical": 0, "warning": 1, "ok": 2}.get(severity, 3)
+
+    @staticmethod
+    def _tag_value(tags: list[dict[str, Any]], key: str) -> str | None:
+        for tag in tags:
+            if tag.get("Key") == key and isinstance(tag.get("Value"), str):
+                value = tag["Value"].strip()
+                return value or None
+        return None
+
+    @staticmethod
+    def _ec2_console_url(region: str, instance_id: str) -> str:
+        return f"https://{region}.console.aws.amazon.com/ec2/home?region={region}#InstanceDetails:instanceId={instance_id}"
+
     def _trends_forecast_worker(self, account: AwsAccountConfig, days: int) -> dict[str, Any]:
         client = self._client_factory(account).ce()
         start, end = self._date_range(days)
@@ -646,6 +932,37 @@ class AwsInsightsService:
                 for instance_id in payload.instance_ids
             ]
         }
+
+    def _idle_resources_worker(self, account: AwsAccountConfig, payload: IdleResourcesRequest) -> dict[str, Any]:
+        factory = self._client_factory(account)
+        ec2 = factory.ec2()
+        cloudwatch = factory.cloudwatch()
+        resources: list[dict[str, Any]] = []
+
+        paginator = ec2.get_paginator("describe_instances")
+        for page in paginator.paginate(
+            Filters=[
+                {
+                    "Name": "instance-state-name",
+                    "Values": ["running", "stopped"],
+                }
+            ]
+        ):
+            for reservation in page.get("Reservations", []):
+                for instance in reservation.get("Instances", []):
+                    item = self._ec2_idle_resource_item(
+                        account=account,
+                        cloudwatch=cloudwatch,
+                        instance=instance,
+                        idle_days=payload.idle_days,
+                        cpu_threshold=payload.cpu_threshold,
+                        network_threshold_bytes=payload.network_threshold_bytes,
+                    )
+                    if item is not None:
+                        resources.append(item)
+
+        resources.sort(key=lambda item: (self._severity_rank(item["severity"]), item["resource_id"]))
+        return {"resources": resources[: payload.max_resources]}
 
     def _acm_expiry_worker(self, account: AwsAccountConfig, days: int) -> list[dict[str, Any]]:
         cache_key = (account.key, days)
@@ -810,6 +1127,74 @@ class AwsInsightsService:
             network_idle=network_idle,
             idle=cpu_idle and network_idle,
         ).model_dump()
+
+    def _ec2_idle_resource_item(
+        self,
+        *,
+        account: AwsAccountConfig,
+        cloudwatch: Any,
+        instance: dict[str, Any],
+        idle_days: int,
+        cpu_threshold: float,
+        network_threshold_bytes: float,
+    ) -> dict[str, Any] | None:
+        instance_id = instance.get("InstanceId")
+        if not instance_id:
+            return None
+        state = instance.get("State", {}).get("Name") or "unknown"
+        name = self._tag_value(instance.get("Tags", []), "Name")
+        metrics = self._get_instance_metric_averages(
+            cloudwatch=cloudwatch,
+            instance_id=instance_id,
+            start_time=datetime.now(UTC) - timedelta(days=idle_days),
+            end_time=datetime.now(UTC),
+        )
+        cpu_points = metrics["CPUUtilization"]
+        cpu_average = round(sum(cpu_points) / len(cpu_points), 2) if cpu_points else None
+        network_average = round(float(metrics["NetworkIn"] + metrics["NetworkOut"]), 2)
+        cpu_idle = cpu_average is not None and cpu_average < cpu_threshold
+        network_idle = network_average < network_threshold_bytes
+        stopped = state == "stopped"
+        idle = stopped or (cpu_idle and network_idle)
+
+        if not idle and not cpu_idle:
+            return None
+
+        if stopped:
+            severity = "warning"
+            signal = "Instance is stopped but may still carry attached storage cost."
+            finding = "Stopped EC2 instance"
+            implication = "Stopped instances do not accrue compute cost, but attached EBS volumes and snapshots can continue to spend."
+            suggested_action = "Confirm ownership, snapshot if required, then terminate stale instances and delete unattached volumes."
+        elif idle:
+            severity = "critical"
+            signal = f"CPU average {cpu_average}% and network average {network_average} bytes over {idle_days} day(s)."
+            finding = "Idle EC2 instance"
+            implication = "Compute capacity appears allocated without meaningful workload activity, creating avoidable recurring cost."
+            suggested_action = "Validate with the owner, then stop, rightsize, schedule, or terminate the instance."
+        else:
+            severity = "warning"
+            signal = f"CPU average {cpu_average}% over {idle_days} day(s)."
+            finding = "Underused EC2 instance"
+            implication = "Low CPU indicates the instance may be oversized or used only intermittently."
+            suggested_action = "Check business schedule and rightsize or add start/stop automation."
+
+        return {
+            "resource_type": "EC2 instance",
+            "resource_id": instance_id,
+            "name": name,
+            "region": account.region,
+            "signal": signal,
+            "finding": finding,
+            "implication": implication,
+            "suggested_action": suggested_action,
+            "severity": severity,
+            "idle": idle,
+            "cpu_average_percent": cpu_average,
+            "network_average_bytes": network_average,
+            "estimated_monthly_waste": None,
+            "console_url": self._ec2_console_url(account.region, instance_id),
+        }
 
     def _get_cost_by_service_response(
         self,

@@ -90,10 +90,10 @@ export const chatApi = {
     );
   },
 
-  refreshAnalyticsHubSnapshot() {
+  refreshAnalyticsHubSnapshot(tableKey = "all") {
     return requestValidated<AnalyticsHubRefreshResponse>(
       "/api/v1/aws/analytics-hub/refresh",
-      { method: "POST" },
+      { method: "POST", body: { table_key: tableKey } },
       isAnalyticsHubRefreshResponse,
       "Analytics refresh response had an unexpected format.",
     );

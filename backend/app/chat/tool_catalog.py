@@ -129,6 +129,24 @@ AWS_TOOL_CATALOG: tuple[AwsToolDefinition, ...] = (
         trigger_phrases=("resource cost", "instance cost", "resource id"),
     ),
     AwsToolDefinition(
+        tool_name="idle_resources",
+        endpoint="/api/v1/aws/idle-resources",
+        summary="Discovers idle and underused AWS resources from inventory and CloudWatch metrics.",
+        use_when=(
+            "Use when the user asks for idle resources, waste candidates, underused resources, "
+            "rightsizing candidates, or resources that can be stopped or removed without naming instance ids."
+        ),
+        response_shape=(
+            "Returns `resources[]` with `resource_type`, `resource_id`, `signal`, `finding`, "
+            "`implication`, `suggested_action`, `severity`, metric averages, and console links."
+        ),
+        required_inputs=(),
+        optional_inputs=("account_keys", "idle_days", "cpu_threshold", "network_threshold_bytes", "days"),
+        cache_value="high",
+        live_call_required=True,
+        trigger_phrases=("idle resources", "unused resources", "underused resources", "waste candidates", "rightsizing candidates"),
+    ),
+    AwsToolDefinition(
         tool_name="ec2_idle_check",
         endpoint="/api/v1/aws/ec2/idle-check",
         summary="Checks whether EC2 instances look idle from CPU and network metrics.",
@@ -143,6 +161,21 @@ AWS_TOOL_CATALOG: tuple[AwsToolDefinition, ...] = (
         cache_value="medium",
         live_call_required=True,
         trigger_phrases=("idle ec2", "unused instance", "idle check", "underused instance"),
+    ),
+    AwsToolDefinition(
+        tool_name="certificate_expiry",
+        endpoint="/api/v1/aws/certificates/expiring",
+        summary="Lists ACM certificates expiring soon.",
+        use_when=(
+            "Use when the user asks about expiring certificates, ACM certificate expiry, TLS/SSL renewal risk, "
+            "or certificate dates."
+        ),
+        response_shape="Returns `certificates[]` with certificate arn, domain name, expiry date, and days to expiry.",
+        required_inputs=(),
+        optional_inputs=("account_keys", "days"),
+        cache_value="medium",
+        live_call_required=True,
+        trigger_phrases=("certificate expiry", "expiring certificates", "acm", "tls expiry", "ssl expiry", "renew certificate"),
     ),
     AwsToolDefinition(
         tool_name="ecs_insights",

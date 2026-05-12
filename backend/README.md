@@ -1,6 +1,6 @@
 # AWS Insights API
 
-FastAPI service for querying AWS cost, budget, forecast, resource, and EC2 idle insights across one or more configured AWS accounts, plus an LLM endpoint that uses OAuth and the configured LLM gateway.
+FastAPI service for querying AWS cost, budget, forecast, resource, and EC2 idle insights across one or more configured AWS accounts, plus an LLM endpoint that uses VOX OAuth and the Pfizer Vessel OpenAI gateway.
 
 ## Features
 
@@ -9,8 +9,8 @@ FastAPI service for querying AWS cost, budget, forecast, resource, and EC2 idle 
 - AWS Budgets lookup by budget name
 - Resource-level cost lookup by Cost Explorer `RESOURCE_ID`
 - EC2 idle detection using CloudWatch CPU and network metrics
-- OAuth token generation with client credentials from `.env`
-- LLM question-answer endpoint backed by the configured LLM gateway
+- VOX token generation with client credentials from `.env`
+- LLM question-answer endpoint backed by the Pfizer Vessel OpenAI gateway
 - JSONL archive of AWS API responses that keeps the 2 most recent calls per endpoint for comparison
 - Persistent chat history in `data/chat_context.jsonl`
 - SSE chat streaming compatible with the frontend chat app
@@ -19,7 +19,7 @@ FastAPI service for querying AWS cost, budget, forecast, resource, and EC2 idle 
 
 - Python 3.12+
 - AWS credentials for each configured account
-- OAuth credentials for the LLM endpoint
+- VOX credentials for the LLM endpoint
 - writable persistent storage for JSONL files when deployed outside local development
 - Access to the AWS APIs used by this app:
   - Cost Explorer
@@ -90,19 +90,11 @@ GET http://127.0.0.1:8000/api/health
 
 The frontend is in `../my-app`.
 
-Fake backend mode:
-
-1. In `my-app/.env.local`, keep `VITE_USE_FAKE_BACKEND=true`
-2. Run frontend only with `npm run dev`
-
-Real backend mode:
-
 1. Start the backend from the `backend` folder
 2. In `my-app/.env.local`, set:
 
 ```env
-VITE_USE_FAKE_BACKEND=false
-VITE_API_BASE_URL=https://aws_analytics.shaktisinha.org/
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 3. Start the frontend:
@@ -124,7 +116,7 @@ Path handling note:
 
 ## Configuration
 
-AWS accounts are loaded from `.env` using `AWS_ACCOUNT_KEYS`.
+AWS accounts are loaded from `AWS_ACCOUNT_KEYS`. Each account can be configured directly in `.env` or by pointing the account at an AWS Secrets Manager secret.
 
 ```env
 AWS_ACCOUNT_KEYS=dev,prod
@@ -139,26 +131,33 @@ AWS_ACCOUNT__PROD__ACCESS_KEY_ID=your_access_key_here
 AWS_ACCOUNT__PROD__SECRET_ACCESS_KEY=your_secret_key_here
 AWS_ACCOUNT__PROD__SESSION_TOKEN=
 AWS_ACCOUNT__PROD__REGION=us-east-1
+
+# Optional Secrets Manager mode for any account key:
+# AWS_ACCOUNT__DEV__SECRET_ID=aws-insights/dev-account
+# AWS_SECRETS_MANAGER_REGION=us-east-1
 AWS_ACCOUNT__PROD__ACCOUNT_ID=210987654321
 
-OAUTH_CLIENT_ID=your_client_id
-OAUTH_CLIENT_SECRET=your_client_secret
-TOKEN_URL=https://auth.example.com/oauth2/token?grant_type=client_credentials
-LLM_API=https://llm-gateway.example.com/chatCompletion
-LLM_PAYLOAD_MODE=model_messages
-LLM_ENGINE=gpt-4o-mini
-LLM_TEMPERATURE=0.1
-LLM_MAX_TOKENS=10000
+VOX_USER=your_vox_user
+VOX_PASSWORD=your_vox_password
+TOKEN_URL=https://devfederate.pfizer.com/as/token.oauth2?grant_type=client_credentials
+VESSEL_OPENAI_API=https://mule4api-comm-amer-dev.pfizer.com/vessel-openai-api-v1/chatCompletion
+VESSEL_OPENAI_PAYLOAD_MODE=model_messages
+VESSEL_OPENAI_ENGINE=gpt-4o-mini
+VESSEL_OPENAI_TEMPERATURE=0.1
+VESSEL_OPENAI_MAX_TOKENS=10000
 TOKEN_CACHE_MINUTES=20
 TOKEN_REQUEST_TIMEOUT_SECONDS=30
 LLM_REQUEST_TIMEOUT_SECONDS=60
 APP_DATA_DIR=data
 CHAT_CONTEXT_FILE=data/chat_context.jsonl
 API_RESPONSE_ARCHIVE_FILE=data/api_response_archive.jsonl
+ANALYTICS_HUB_SNAPSHOT_FILE=data/analytics_hub_snapshot.json
+ANALYTICS_HUB_TABLE_CACHE_FILE=data/analytics_hub_tables.jsonl
+TOOL_CATALOG_INDEX_FILE=data/tool_catalog_index.jsonl
 CHAT_RECENT_LIMIT=10
 CHAT_CONTEXT_MESSAGE_LIMIT=6
 CHAT_CONTEXT_PROMPT_CHAR_LIMIT=2500
-CORS_ALLOWED_ORIGINS=https://analytics.shaktisinha.org
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 CORS_ALLOW_METHODS=GET,POST,PATCH,DELETE,OPTIONS
 CORS_ALLOW_HEADERS=*
 ```
@@ -166,20 +165,25 @@ CORS_ALLOW_HEADERS=*
 Notes:
 
 - `AWS_ACCOUNT__<KEY>__ACCOUNT_ID` is optional. If omitted, the app resolves it with STS `GetCallerIdentity`.
-- Accounts missing `ACCESS_KEY_ID` or `SECRET_ACCESS_KEY` are ignored.
+- Accounts missing `ACCESS_KEY_ID` or `SECRET_ACCESS_KEY` are ignored unless `AWS_ACCOUNT__<KEY>__SECRET_ID` is set.
+- If `AWS_ACCOUNT__<KEY>__SECRET_ID` is set, the backend reads account credentials from AWS Secrets Manager. The secret value must be JSON with `access_key_id` and `secret_access_key`; optional keys are `session_token`, `region`, and `account_id`.
+- The backend process role or host credentials must have `secretsmanager:GetSecretValue` for every configured account secret.
 - `AWS_ACCOUNT_KEYS` can include accounts other than the account where this app is deployed. For example, if the app is deployed in the `dev` AWS account, it can still query `prod` as long as `AWS_ACCOUNT_KEYS=dev,prod` and both account credential blocks are present in `.env`.
 - If `account_keys` is omitted in a request body, the API queries all configured accounts.
 - Default region is `us-east-1`.
-- `APP_DATA_DIR` is the simplest way to move both JSONL files onto persistent storage in deployed environments.
+- `APP_DATA_DIR` is the simplest way to move JSON/JSONL cache files onto persistent storage in deployed environments.
 - `API_RESPONSE_ARCHIVE_FILE` overrides only the AWS archive JSONL path when you need separate control.
+- `ANALYTICS_HUB_SNAPSHOT_FILE` is the materialized dashboard snapshot returned immediately on page load.
+- `ANALYTICS_HUB_TABLE_CACHE_FILE` is append-only JSONL history for table refreshes. Refreshing one dashboard table appends one record for that table and merges only that table into the materialized snapshot.
+- `TOOL_CATALOG_INDEX_FILE` stores the local JSONL semantic index for AWS tool routing. The backend rebuilds it from the tool catalog on startup.
 - `CORS_ALLOWED_ORIGINS` should contain the frontend origin in local development and in deployed environments when frontend and backend are on different domains.
 - If frontend and backend are served from the same origin through a reverse proxy, CORS may not be needed, but the current backend supports explicit origins for both local and deployed setups.
-- `LLM_ENGINE` is read from `.env` so you can switch models later without code changes.
-- `TOKEN_URL` can keep `grant_type=client_credentials` in the query string. The backend sends only OAuth client authentication plus that URL to obtain the token.
-- `LLM_PAYLOAD_MODE=model_messages` is the right setting for the LLM gateways shown so far, including `.../chatCompletion` and `.../completions`.
-- `TOKEN_CACHE_MINUTES=20` is the fallback token reuse window when the OAuth response does not include a usable `expires_in`.
+- `VESSEL_OPENAI_ENGINE` is read from `.env` so you can switch models later without code changes.
+- `TOKEN_URL` can keep `grant_type=client_credentials` in the query string. The backend sends only VOX basic auth plus that URL to obtain the token.
+- `VESSEL_OPENAI_PAYLOAD_MODE=model_messages` is the right setting for the Pfizer gateways shown so far, including `.../chatCompletion` and `.../vox-genai-api/completions`.
+- `TOKEN_CACHE_MINUTES=20` is the fallback token reuse window when the VOX OAuth response does not include a usable `expires_in`.
 - The backend reuses the cached token until it is near expiry instead of regenerating it on every LLM request.
-- The LLM payload is controlled by `LLM_PAYLOAD_MODE`: `model_messages` sends `{"model": "...", "messages": [...]}`, while `engine_prompt` sends `{"engine": "...", "prompt": "..."}`.
+- The LLM payload is controlled by `VESSEL_OPENAI_PAYLOAD_MODE`: `model_messages` sends `{"model": "...", "messages": [...]}`, while `engine_prompt` sends `{"engine": "...", "prompt": "..."}`.
 - `CHAT_RECENT_LIMIT=10` means only the 10 most recently updated chats keep full messages.
 - `CHAT_CONTEXT_MESSAGE_LIMIT=6` means only the most recent 6 messages from the active chat are added as prompt memory.
 - `CHAT_CONTEXT_PROMPT_CHAR_LIMIT=2500` caps chat memory size before it is sent to the LLM.
@@ -208,6 +212,14 @@ JSONL persistence on AWS:
 - this app can continue using JSONL after deployment
 - do not keep JSONL only inside an ephemeral container filesystem if you want data to survive task restarts or deployments
 - mount persistent storage such as Amazon EFS to the backend container or instance
+
+Analytics Hub refresh model:
+
+- `GET /api/v1/aws/analytics-hub/snapshot` returns the stored snapshot without calling AWS. This makes the dashboard landing page fast.
+- `POST /api/v1/aws/analytics-hub/refresh` accepts `{"table_key":"all"}` for a full refresh.
+- Table refresh buttons send one of `financial`, `accounts`, `certificates`, `utilization`, or `idle`; only that table's AWS APIs are called and only that section is merged into the snapshot.
+- ECS utilization uses AWS ECS APIs plus CloudWatch `AWS/ECS` CPU and memory metrics when available. If metrics are absent, it falls back to running-vs-desired task percentage.
+- Idle resource detection uses AWS EC2 inventory plus CloudWatch `AWS/EC2` CPU and network metrics, then stores findings and implications in the Analytics Hub JSONL table cache.
 - then point these environment variables to that mounted path
 
 Example deployed backend environment:
@@ -227,7 +239,7 @@ APP_DATA_DIR=/mnt/app-data/aws-insights
 CHAT_CONTEXT_FILE=/mnt/app-data/aws-insights/chat_context.jsonl
 API_RESPONSE_ARCHIVE_FILE=/mnt/app-data/aws-insights/api_response_archive.jsonl
 
-CORS_ALLOWED_ORIGINS=https://analytics.shaktisinha.org
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 If you run more than one backend instance:
@@ -339,7 +351,7 @@ Base path: `/api/v1/llm`
 
 ### `POST /answer`
 
-Generates or reuses a cached OAuth access token, sends the prompt to the configured LLM gateway, and returns a concise answer.
+Generates or reuses a cached VOX access token, sends the prompt to the configured Vessel OpenAI gateway, and returns a concise answer.
 
 ```json
 {
@@ -363,7 +375,7 @@ If token generation or the LLM call fails, the API returns an HTTP error with a 
 
 ### `GET /health-check`
 
-Reuses the cached token when it is still valid, otherwise generates a new one from `TOKEN_URL`, returns the access token, and sends a minimal prompt to the configured LLM gateway so you can verify both token generation and LLM connectivity.
+Reuses the cached token when it is still valid, otherwise generates a new one from `TOKEN_URL`, returns the access token, and sends a minimal prompt to the configured Vessel OpenAI gateway so you can verify both token generation and LLM connectivity.
 
 Response:
 
@@ -525,6 +537,18 @@ This chat context is used as part of the effective LLM context together with:
 - tool catalog
 - recent AWS archive data if relevant
 - live AWS data
+
+## Tool Routing
+
+Chat tool selection uses a local semantic router before the LLM planner fallback:
+
+```text
+final_score = 0.55 * semantic similarity + 0.25 * deterministic trigger score + 0.20 * entity score
+```
+
+The semantic index is written as JSONL at `TOOL_CATALOG_INDEX_FILE`. If `faiss-cpu` is installed, the backend uses a FAISS `IndexFlatIP` index for vector search. If FAISS is unavailable on the host, routing falls back to the same normalized cosine scoring in Python so the app still runs.
+
+The catalog includes tools for accounts, cost breakdown, total cost, service costs, trends/forecast, budgets, resource cost, idle resources, specific EC2 idle checks, certificate expiry, and ECS insights.
 
 For a step-by-step explanation of how the user prompt is processed and how the streamed response is created, see:
 

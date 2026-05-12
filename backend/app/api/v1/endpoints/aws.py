@@ -6,16 +6,21 @@ from pydantic import BaseModel
 from app.schemas.aws import (
     AccountListResponse,
     AnalyticsHubRefreshResponse,
+    AnalyticsHubRefreshRequest,
     AnalyticsHubSnapshotResponse,
     AwsAccountsRequest,
     BudgetRequest,
+    CertificateExpiryRequest,
     CostBreakdownRequest,
     Ec2IdleRequest,
     EcsInsightRequest,
+    IdleResourcesRequest,
     MultiAccountBudgetResponse,
+    MultiAccountCertificateExpiryResponse,
     MultiAccountCostBreakdownResponse,
     MultiAccountEcsInsightResponse,
     MultiAccountIdleResponse,
+    MultiAccountIdleResourcesResponse,
     MultiAccountResourceCostResponse,
     MultiAccountServiceCostResponse,
     MultiAccountTotalCostResponse,
@@ -104,12 +109,15 @@ async def analytics_hub_snapshot(
     summary="Queue a background refresh for Analytics Hub data",
 )
 async def refresh_analytics_hub_snapshot(
+    payload: AnalyticsHubRefreshRequest | None = None,
     service: AnalyticsHubSnapshotService = Depends(get_analytics_hub_snapshot_service),
 ) -> AnalyticsHubRefreshResponse:
-    queued = service.queue_refresh()
+    table_key = payload.table_key if payload is not None else "all"
+    queued = service.queue_refresh(table_key)
     return AnalyticsHubRefreshResponse(
         queued=queued,
         refresh_in_progress=service.is_refresh_in_progress(),
+        table_key=table_key,
     )
 
 
@@ -245,6 +253,44 @@ async def ec2_idle_check(
         endpoint="/api/v1/aws/ec2/idle-check",
         response_model=MultiAccountIdleResponse,
         service_response=await service.get_ec2_idle_status(payload),
+        request_payload=payload,
+        archive_service=archive_service,
+    )
+
+
+@router.post(
+    "/idle-resources",
+    response_model=MultiAccountIdleResourcesResponse,
+    summary="Detect idle and underused AWS resources",
+)
+async def idle_resources(
+    payload: IdleResourcesRequest,
+    service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
+) -> MultiAccountIdleResourcesResponse:
+    return _validate_and_archive_response(
+        endpoint="/api/v1/aws/idle-resources",
+        response_model=MultiAccountIdleResourcesResponse,
+        service_response=await service.get_idle_resources(payload),
+        request_payload=payload,
+        archive_service=archive_service,
+    )
+
+
+@router.post(
+    "/certificates/expiring",
+    response_model=MultiAccountCertificateExpiryResponse,
+    summary="List ACM certificates expiring soon",
+)
+async def certificate_expiry(
+    payload: CertificateExpiryRequest,
+    service: AwsInsightsService = Depends(get_aws_insights_service),
+    archive_service: ApiResponseArchiveService = Depends(get_api_response_archive_service),
+) -> MultiAccountCertificateExpiryResponse:
+    return _validate_and_archive_response(
+        endpoint="/api/v1/aws/certificates/expiring",
+        response_model=MultiAccountCertificateExpiryResponse,
+        service_response=await service.get_certificate_expiry(payload),
         request_payload=payload,
         archive_service=archive_service,
     )
