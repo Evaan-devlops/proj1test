@@ -53,7 +53,7 @@ class LlmHealthCheckResponse(BaseModel):
     )
     token_type: str | None = Field(
         default=None,
-        description="Token type returned by the OAuth provider, if available.",
+        description="Token type returned by the VOX OAuth provider, if available.",
     )
     expires_at: str | None = Field(
         default=None,
@@ -65,7 +65,7 @@ class LlmHealthCheckResponse(BaseModel):
     )
     llm_provider_status_code: int = Field(
         ...,
-        description="HTTP status code returned by the LLM gateway.",
+        description="HTTP status code returned by the Vessel OpenAI gateway.",
     )
     engine: str = Field(
         ...,
@@ -77,7 +77,7 @@ class LlmHealthCheckResponse(BaseModel):
     )
     prompt: str = Field(
         ...,
-        description="The exact health-check prompt sent to the LLM gateway.",
+        description="The exact health-check prompt sent to the Vessel OpenAI gateway.",
     )
     payload_mode: str = Field(
         ...,
@@ -86,7 +86,7 @@ class LlmHealthCheckResponse(BaseModel):
     )
     request_payload: dict = Field(
         ...,
-        description="Exact JSON payload sent to the downstream LLM gateway for debugging.",
+        description="Exact JSON payload sent to the downstream Vessel OpenAI gateway for debugging.",
     )
     token_cache_source: str = Field(
         ...,
@@ -95,5 +95,5 @@ class LlmHealthCheckResponse(BaseModel):
     )
     provider_request_id: str | None = Field(
         default=None,
-        description="Optional downstream request identifier when returned by the LLM gateway.",
+        description="Optional downstream request identifier when returned by the Vessel OpenAI gateway.",
     )

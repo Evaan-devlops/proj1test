@@ -101,11 +101,18 @@ export type AnalyticsEcsServiceItem = {
   desired_count: number;
   running_count: number;
   pending_count: number;
+  utilization_percent?: number | null;
+  utilization_status?: "underused" | "balanced" | "overused" | string | null;
+  cpu_average_percent?: number | null;
+  memory_average_percent?: number | null;
   launch_type?: string | null;
   task_definition?: string | null;
   deployment_status?: string | null;
   severity: AnalyticsEcsSeverity;
   insight: string;
+  reason?: string | null;
+  solution?: string | null;
+  console_url?: string | null;
   events: string[];
   tasks: AnalyticsEcsTaskItem[];
 };
@@ -119,6 +126,23 @@ export type AnalyticsEcsClusterItem = {
   services: AnalyticsEcsServiceItem[];
 };
 
+export type AnalyticsIdleResourceItem = {
+  resource_type: string;
+  resource_id: string;
+  name?: string | null;
+  region: string;
+  signal: string;
+  finding: string;
+  implication: string;
+  suggested_action: string;
+  severity: AnalyticsEcsSeverity;
+  idle: boolean;
+  cpu_average_percent?: number | null;
+  network_average_bytes?: number | null;
+  estimated_monthly_waste?: number | null;
+  console_url?: string | null;
+};
+
 export type AnalyticsHubAccountSnapshot = {
   account_key: string;
   account_id: string;
@@ -130,6 +154,7 @@ export type AnalyticsHubAccountSnapshot = {
   monthly_cost_trend: AnalyticsMonthlyCostItem[];
   expiring_certificates: AnalyticsCertificateItem[];
   ecs_clusters: AnalyticsEcsClusterItem[];
+  idle_resources: AnalyticsIdleResourceItem[];
 };
 
 export type AnalyticsHubAccountError = {
@@ -154,6 +179,7 @@ export type AnalyticsHubSnapshotResponse = {
 export type AnalyticsHubRefreshResponse = {
   queued: boolean;
   refresh_in_progress: boolean;
+  table_key: string;
 };
 
 export type ChatStreamRequest = {

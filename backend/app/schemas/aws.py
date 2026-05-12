@@ -98,6 +98,44 @@ class Ec2IdleRequest(AwsAccountsRequest):
     )
 
 
+class IdleResourcesRequest(AwsAccountsRequest):
+    idle_days: int = Field(
+        default=14,
+        ge=1,
+        le=90,
+        description="Number of days of CloudWatch metrics to evaluate for idle resource detection.",
+    )
+    cpu_threshold: float = Field(
+        default=1.0,
+        ge=0,
+        description="Average CPU threshold below which an EC2 instance is treated as idle.",
+    )
+    network_threshold_bytes: float = Field(
+        default=102400,
+        ge=0,
+        description="Combined average daily network threshold below which an EC2 instance is treated as idle.",
+    )
+    max_resources: int = Field(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum idle/underused resources to return per account.",
+    )
+
+
+class CertificateExpiryRequest(AwsSchemaBase):
+    account_keys: list[str] | None = Field(
+        default=None,
+        description="Configured AWS account aliases from `.env`. If omitted, all accounts are checked.",
+    )
+    days: int = Field(
+        default=90,
+        ge=1,
+        le=365,
+        description="Return ACM certificates expiring within this many days.",
+    )
+
+
 class EcsInsightRequest(AwsSchemaBase):
     account_keys: list[str] | None = Field(
         default=None,
@@ -179,6 +217,23 @@ class IdleStatusItem(BaseModel):
     cpu_idle: bool
     network_idle: bool
     idle: bool
+
+
+class IdleResourceItem(BaseModel):
+    resource_type: str
+    resource_id: str
+    name: str | None = None
+    region: str
+    signal: str
+    finding: str
+    implication: str
+    suggested_action: str
+    severity: str
+    idle: bool
+    cpu_average_percent: float | None = None
+    network_average_bytes: float | None = None
+    estimated_monthly_waste: float | None = None
+    console_url: str | None = None
 
 
 T = TypeVar("T")
@@ -325,6 +380,22 @@ class MultiAccountIdleResponse(MultiAccountAggregateResponse[MultiAccountIdleRes
     succeeded_accounts: list[AccountSuccess[MultiAccountIdleResult]]
 
 
+class MultiAccountIdleResourcesResult(BaseModel):
+    resources: list[IdleResourceItem]
+
+
+class MultiAccountIdleResourcesResponse(MultiAccountAggregateResponse[MultiAccountIdleResourcesResult]):
+    succeeded_accounts: list[AccountSuccess[MultiAccountIdleResourcesResult]]
+
+
+class MultiAccountCertificateExpiryResult(BaseModel):
+    certificates: list["AnalyticsCertificateItem"]
+
+
+class MultiAccountCertificateExpiryResponse(MultiAccountAggregateResponse[MultiAccountCertificateExpiryResult]):
+    succeeded_accounts: list[AccountSuccess[MultiAccountCertificateExpiryResult]]
+
+
 class MultiAccountEcsInsightResult(BaseModel):
     clusters: list["AnalyticsEcsClusterItem"]
 
@@ -369,11 +440,18 @@ class AnalyticsEcsServiceItem(BaseModel):
     desired_count: int
     running_count: int
     pending_count: int
+    utilization_percent: float | None = None
+    utilization_status: str | None = None
+    cpu_average_percent: float | None = None
+    memory_average_percent: float | None = None
     launch_type: str | None = None
     task_definition: str | None = None
     deployment_status: str | None = None
     severity: str
     insight: str
+    reason: str | None = None
+    solution: str | None = None
+    console_url: str | None = None
     events: list[str] = []
     tasks: list[AnalyticsEcsTaskItem] = []
 
@@ -398,6 +476,7 @@ class AnalyticsHubAccountSnapshot(BaseModel):
     monthly_cost_trend: list[AnalyticsMonthlyCostItem]
     expiring_certificates: list[AnalyticsCertificateItem]
     ecs_clusters: list[AnalyticsEcsClusterItem] = []
+    idle_resources: list[IdleResourceItem] = []
 
 
 class AnalyticsHubAccountError(BaseModel):
@@ -419,6 +498,14 @@ class AnalyticsHubSnapshotResponse(BaseModel):
     refresh_in_progress: bool = False
 
 
+class AnalyticsHubRefreshRequest(BaseModel):
+    table_key: str = Field(
+        default="all",
+        description="Analytics Hub table to refresh: all, accounts, financial, certificates, utilization, or idle.",
+    )
+
+
 class AnalyticsHubRefreshResponse(BaseModel):
     queued: bool
     refresh_in_progress: bool
+    table_key: str = "all"

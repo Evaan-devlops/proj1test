@@ -14,7 +14,7 @@ router = APIRouter()
 @router.post(
     "/answer",
     response_model=LlmAnswerResponse,
-    summary="Answer a question using supplied context via the configured LLM gateway",
+    summary="Answer a question using supplied context via the configured Vessel OpenAI gateway",
 )
 async def answer_question(
     payload: LlmAnswerRequest,
@@ -26,7 +26,7 @@ async def answer_question(
 @router.get(
     "/health-check",
     response_model=LlmHealthCheckResponse,
-    summary="Verify OAuth token generation and downstream LLM connectivity",
+    summary="Verify VOX token generation and downstream LLM connectivity",
 )
 async def llm_health_check(
     service: LlmService = Depends(get_llm_service),

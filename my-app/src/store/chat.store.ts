@@ -5,8 +5,6 @@ import type { ApiStreamResult } from "src/lib/http";
 import { create } from "zustand";
 import type { StateCreator } from "zustand";
 
-const USE_FAKE = import.meta.env?.VITE_USE_FAKE_BACKEND === "true";
-
 type Role = "user" | "assistant";
 type MsgStatus = "final" | "streaming" | "error";
 
@@ -317,66 +315,6 @@ async function ensureActiveChatId(get: GetFn): Promise<string | null> {
   return created ?? get().activeChatId;
 }
 
-function startFakeStreaming(chatId: string, get: GetFn, set: SetFn) {
-  const fake =
-    "Hello! This is a fake streaming response. Later we will replace this with backend streaming (SSE or fetch streaming).";
-  const chunks = fake.match(/.{1,8}/g) ?? [fake];
-  let i = 0;
-
-  const finalize = () => {
-    set((state) => {
-      const msgs = state.messagesByChatId[chatId] ?? [];
-      const last = msgs[msgs.length - 1];
-      if (!last || last.role !== "assistant") {
-        return {
-          isStreaming: false,
-          activeStreamChatId: null,
-          streamCancel: null,
-          streamTimerId: null,
-        };
-      }
-      const updated = { ...last, status: "final" as MsgStatus };
-      return {
-        messagesByChatId: { ...state.messagesByChatId, [chatId]: [...msgs.slice(0, -1), updated] },
-        isStreaming: false,
-        activeStreamChatId: null,
-        streamCancel: null,
-        streamTimerId: null,
-      };
-    });
-  };
-
-  const timerId = window.setInterval(() => {
-    const state = get();
-    if (!state.isStreaming || state.activeStreamChatId !== chatId) {
-      window.clearInterval(timerId);
-      return;
-    }
-    const chunk = chunks[i++];
-    if (chunk) {
-      set((s) => {
-        const msgs = s.messagesByChatId[chatId] ?? [];
-        const last = msgs[msgs.length - 1];
-        if (!last || last.role !== "assistant") return {};
-        const updated = { ...last, text: last.text + chunk, status: "streaming" as MsgStatus };
-        return {
-          messagesByChatId: { ...s.messagesByChatId, [chatId]: [...msgs.slice(0, -1), updated] },
-        };
-      });
-    }
-    if (i >= chunks.length) {
-      window.clearInterval(timerId);
-      finalize();
-    }
-  }, 60);
-
-  const cancel = () => {
-    window.clearInterval(timerId);
-  };
-
-  set({ streamCancel: cancel, streamTimerId: timerId });
-}
-
 const creator: StateCreator<ChatStore> = (set, get) => ({
   chats: [],
   chatsLoaded: false,
@@ -398,17 +336,6 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
 
   loadAccounts: async () => {
     if (get().accountsLoaded) return;
-
-    if (USE_FAKE) {
-      const fakeAccounts = ["dev", "prod"];
-      set({
-        lastError: null,
-        availableAccountKeys: fakeAccounts,
-        selectedAccountKeys: defaultSelectedAccounts(fakeAccounts),
-        accountsLoaded: true,
-      });
-      return;
-    }
 
     const result = await chatApi.listAccounts();
     if (!result.ok) {
@@ -452,14 +379,6 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
 
   hydrateChats: async () => {
     if (get().isLoadingChats || get().chatsLoaded) return;
-
-    if (USE_FAKE) {
-      set({ lastError: null, chatsLoaded: true, isLoadingChats: false });
-      if (!get().activeChatId) {
-        await get().newChat();
-      }
-      return;
-    }
 
     set({ isLoadingChats: true });
     const result = await chatApi.listChats({ limit: 50 });
@@ -525,19 +444,6 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
   },
 
   newChat: async () => {
-    if (USE_FAKE) {
-      const now = Date.now();
-      const id = genId("chat");
-      set((state) => ({
-        lastError: null,
-        chats: sortChatsDescending([{ id, title: "New chat", updatedAt: now }, ...state.chats]),
-        activeChatId: id,
-        messagesByChatId: { ...state.messagesByChatId, [id]: [] },
-        messagesLoadedByChatId: { ...state.messagesLoadedByChatId, [id]: true },
-      }));
-      return id;
-    }
-
     const result = await chatApi.createChat({ title: "New chat" });
     if (!result.ok) {
       set({
@@ -628,41 +534,6 @@ const creator: StateCreator<ChatStore> = (set, get) => ({
 
     const now = Date.now();
     const title = makeTitleFromText(trimmed);
-
-    if (USE_FAKE) {
-      const userMsg: Message = {
-        id: genId("msg_user"),
-        role: "user",
-        text: trimmed,
-        createdAt: now,
-        status: "final" as MsgStatus,
-      };
-      const assistantMsg: Message = {
-        id: genId("msg_asst"),
-        role: "assistant",
-        text: "",
-        createdAt: now + 1,
-        status: "streaming" as MsgStatus,
-      };
-
-      set((state) => ({
-        messagesByChatId: {
-          ...state.messagesByChatId,
-          [chatId]: [...(state.messagesByChatId[chatId] ?? []), userMsg, assistantMsg],
-        },
-        latestUserMessageIdByChatId: { ...state.latestUserMessageIdByChatId, [chatId]: userMsg.id },
-        focusedUserMessageIdByChatId: { ...state.focusedUserMessageIdByChatId, [chatId]: userMsg.id },
-        chats: touchChat(state.chats, chatId, now, title),
-        lastError: null,
-        isStreaming: true,
-        activeStreamChatId: chatId,
-        streamCancel: null,
-        streamTimerId: null,
-      }));
-
-      startFakeStreaming(chatId, get, set);
-      return true;
-    }
 
     const tempUserId = genId("msg_user");
     const tempAssistantId = genId("msg_asst");

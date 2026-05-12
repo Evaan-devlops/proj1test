@@ -88,3 +88,8 @@ body {
 .guide-flow-card:nth-child(4) {
   animation-delay: 540ms;
 }
+
+.content-visibility-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 760px;
+}

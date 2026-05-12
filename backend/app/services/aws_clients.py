@@ -33,5 +33,8 @@ class AwsClientFactory:
     def ecs(self):
         return self._session.client("ecs", region_name=self.account.region)
 
+    def ec2(self):
+        return self._session.client("ec2", region_name=self.account.region)
+
     def tagging(self):
         return self._session.client("resourcegroupstaggingapi", region_name=self.account.region)

@@ -48,7 +48,7 @@ class LlmService:
         return LlmAnswerResponse(
             answer=answer,
             prompt=prompt,
-            engine=settings.llm_engine,
+            engine=settings.vessel_openai_engine,
             provider_request_id=provider_request_id,
         )
 
@@ -113,7 +113,7 @@ class LlmService:
             ),
             token_provider_status_code=token_payload.provider_status_code or 200,
             llm_provider_status_code=provider_response["status_code"],
-            engine=settings.llm_engine,
+            engine=settings.vessel_openai_engine,
             llm_answer=answer,
             prompt=prompt,
             payload_mode=self._payload_mode(),
@@ -168,7 +168,7 @@ class LlmService:
             client = await self._get_token_client()
             response = await client.post(
                 settings.token_url,
-                auth=(settings.oauth_client_id, settings.oauth_client_secret),
+                auth=(settings.vox_user, settings.vox_password),
                 headers={"Accept": "application/json"},
                 data=self._token_request_data(),
             )
@@ -181,8 +181,8 @@ class LlmService:
                 detail={
                     "source": "token_generation",
                     "message": (
-                        "Timed out while requesting the OAuth access token. "
-                        "Check TOKEN_URL connectivity and OAuth credentials."
+                        "Timed out while requesting the VOX access token. "
+                        "Check TOKEN_URL connectivity and VOX credentials."
                     ),
                 },
             ) from exc
@@ -193,8 +193,8 @@ class LlmService:
                 detail={
                     "source": "token_generation",
                     "message": (
-                        "Token generation failed at the OAuth endpoint. "
-                        "Verify OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, and TOKEN_URL."
+                        "Token generation failed at the VOX OAuth endpoint. "
+                        "Verify VOX_USER, VOX_PASSWORD, and TOKEN_URL."
                     ),
                     "provider_status_code": exc.response.status_code,
                     "provider_response": self._safe_error_body(exc.response),
@@ -233,7 +233,7 @@ class LlmService:
         try:
             client = await self._get_llm_client()
             response = await client.post(
-                settings.llm_api,
+                settings.vessel_openai_api,
                 headers=headers,
                 json=payload,
             )
@@ -253,8 +253,8 @@ class LlmService:
                 detail={
                     "source": "llm_call",
                     "message": (
-                        "Timed out while calling the LLM API. "
-                        "Check LLM_API availability."
+                        "Timed out while calling the Vessel OpenAI API. "
+                        "Check VESSEL_OPENAI_API availability."
                     ),
                 },
             ) from exc
@@ -265,8 +265,8 @@ class LlmService:
                 detail={
                     "source": "llm_call",
                     "message": (
-                        "The LLM gateway rejected the request. "
-                        "Verify the OAuth token, engine, gateway URL, and payload mode "
+                        "The Vessel OpenAI gateway rejected the request. "
+                        "Verify the VOX token, engine, gateway URL, and payload mode "
                         "(chatCompletion vs completions)."
                     ),
                     "provider_status_code": exc.response.status_code,
@@ -281,7 +281,7 @@ class LlmService:
                 status_code=502,
                 detail={
                     "source": "llm_call",
-                    "message": "The LLM API returned a non-JSON response.",
+                    "message": "The Vessel OpenAI API returned a non-JSON response.",
                 },
             ) from exc
         except httpx.HTTPError as exc:
@@ -291,8 +291,8 @@ class LlmService:
                 detail={
                     "source": "llm_call",
                     "message": (
-                        "The LLM API request failed before a response was received. "
-                        "Check LLM_API connectivity."
+                        "The Vessel OpenAI API request failed before a response was received. "
+                        "Check VESSEL_OPENAI_API connectivity."
                     ),
                 },
             ) from exc
@@ -404,24 +404,24 @@ class LlmService:
     def _build_llm_payload(self, prompt: str) -> dict[str, Any]:
         if self._payload_mode() == "model_messages":
             return {
-                "model": settings.llm_engine,
+                "model": settings.vessel_openai_engine,
                 "messages": [{"role": "user", "content": prompt}],
             }
 
         return {
-            "engine": settings.llm_engine,
+            "engine": settings.vessel_openai_engine,
             "prompt": prompt,
-            "temperature": settings.llm_temperature,
-            "max_tokens": settings.llm_max_tokens,
+            "temperature": settings.vessel_openai_temperature,
+            "max_tokens": settings.vessel_openai_max_tokens,
         }
 
     def _payload_mode(self) -> str:
-        mode = settings.llm_payload_mode
+        mode = settings.vessel_openai_payload_mode
         if mode in {"model_messages", "engine_prompt"}:
             return mode
 
-        llm_url = settings.llm_api.lower()
-        if "chatcompletion" in llm_url:
+        llm_url = settings.vessel_openai_api.lower()
+        if "vox-genai-api" in llm_url or "chatcompletion" in llm_url:
             return "model_messages"
         return "engine_prompt"
 

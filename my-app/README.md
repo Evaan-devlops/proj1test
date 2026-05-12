@@ -7,12 +7,7 @@ Vite + React + TypeScript frontend for the AWS chat app.
 - Node.js 20+
 - npm 10+
 - the full `my-app` folder copied as-is
-- for real backend mode, access to the backend at `https://aws_analytics.shaktisinha.org/`
-
-The frontend supports 2 modes:
-
-- fake backend mode: runs without Python backend and shows demo accounts
-- real backend mode: loads chats, account list, and streaming responses from the backend
+- access to the backend at `http://127.0.0.1:8000`
 
 ## Quick Start In Another VS Code Folder
 
@@ -37,31 +32,14 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-7. Open the local URL shown by Vite, usually `http://localhost:5173`. The deployed frontend URL is `https://analytics.shaktisinha.org/`.
+7. Open the local URL shown by Vite, usually `http://localhost:5173`.
 
-## Frontend-Only Demo Mode
-
-Use this in `.env.local`:
-
-```env
-VITE_USE_FAKE_BACKEND=true
-```
-
-In this mode:
-
-- the app runs without the Python backend
-- the account sidebar shows demo accounts `dev` and `prod`
-- chat responses are fake streamed text
-
-This is the fastest way to confirm the frontend boots correctly after copy/paste.
-
-## Real Backend Mode
+## Backend Mode
 
 Use this in `.env.local`:
 
 ```env
-VITE_USE_FAKE_BACKEND=false
-VITE_API_BASE_URL=https://aws_analytics.shaktisinha.org/
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 Then start the frontend.
@@ -90,12 +68,13 @@ In real backend mode:
 - the account sidebar loads from `GET /api/v1/aws/accounts`
 - the selected accounts are sent with each chat request
 - only backend-configured accounts with valid credentials appear in the UI
+- the dashboard opens from the backend's stored Analytics Hub snapshot first, then refreshes AWS data in the background
+- each dashboard table refresh button asks the backend to refresh only that table, so Financial Impact, Accounts, Certificates, and Utilization can update independently
 
 For deployed environments, set `VITE_API_BASE_URL` to the backend URL:
 
 ```env
-VITE_USE_FAKE_BACKEND=false
-VITE_API_BASE_URL=https://aws_analytics.shaktisinha.org/
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 If your backend `.env` contains:
@@ -146,13 +125,12 @@ If VS Code shows many TypeScript errors after copying:
 
 If the frontend opens but no real data appears:
 
-1. Confirm `.env.local` contains `VITE_API_BASE_URL=https://aws_analytics.shaktisinha.org/`.
-2. Confirm `.env.local` contains `VITE_USE_FAKE_BACKEND=false`.
-3. Confirm backend responds at `https://aws_analytics.shaktisinha.org/api/health`.
-4. Confirm backend `.env` has `AWS_ACCOUNT_KEYS` and matching AWS credential variables.
+1. Confirm `.env.local` contains `VITE_API_BASE_URL=http://127.0.0.1:8000`.
+2. Confirm backend responds at `http://127.0.0.1:8000/health`.
+3. Confirm backend `.env` has `AWS_ACCOUNT_KEYS` and matching AWS credential variables.
+4. If using AWS Secrets Manager, confirm each `AWS_ACCOUNT__<KEY>__SECRET_ID` secret contains JSON credentials and the backend role can call `secretsmanager:GetSecretValue`.
 
 ## Notes
 
 - `.env.local` overrides `.env`, so use `.env.local` for machine-specific settings.
-- Fake backend mode is best for quick UI validation.
-- Real backend mode is required for live account loading and live AWS-backed chat responses.
+- The frontend requires the backend for account loading, chat history, streaming responses, and Analytics Hub data.

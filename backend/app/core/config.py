@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv
 
 
@@ -42,35 +45,43 @@ class Settings:
         "ANALYTICS_HUB_SNAPSHOT_FILE",
         f"{app_data_dir}/analytics_hub_snapshot.json",
     )
+    analytics_hub_table_cache_file: str = os.getenv(
+        "ANALYTICS_HUB_TABLE_CACHE_FILE",
+        f"{app_data_dir}/analytics_hub_tables.jsonl",
+    )
+    tool_catalog_index_file: str = os.getenv(
+        "TOOL_CATALOG_INDEX_FILE",
+        f"{app_data_dir}/tool_catalog_index.jsonl",
+    )
     chat_recent_limit: int = int(os.getenv("CHAT_RECENT_LIMIT", "10"))
     chat_context_message_limit: int = int(os.getenv("CHAT_CONTEXT_MESSAGE_LIMIT", "6"))
     chat_context_prompt_char_limit: int = int(os.getenv("CHAT_CONTEXT_PROMPT_CHAR_LIMIT", "2500"))
     cors_allowed_origins_raw: str = os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "https://analytics.shaktisinha.org,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
     )
     cors_allow_methods_raw: str = os.getenv(
         "CORS_ALLOW_METHODS",
         "GET,POST,PATCH,DELETE,OPTIONS",
     )
     cors_allow_headers_raw: str = os.getenv("CORS_ALLOW_HEADERS", "*")
-    oauth_client_id: str = os.getenv("OAUTH_CLIENT_ID", "")
-    oauth_client_secret: str = os.getenv("OAUTH_CLIENT_SECRET", "")
+    vox_user: str = os.getenv("VOX_USER", "")
+    vox_password: str = os.getenv("VOX_PASSWORD", "")
     token_url: str = os.getenv(
         "TOKEN_URL",
-        "https://auth.example.com/oauth2/token?grant_type=client_credentials",
+        "https://devfederate.pfizer.com/as/token.oauth2?grant_type=client_credentials",
     )
-    llm_api: str = os.getenv(
-        "LLM_API",
-        "https://llm-gateway.example.com/chatCompletion",
+    vessel_openai_api: str = os.getenv(
+        "VESSEL_OPENAI_API",
+        "https://mule4api-comm-amer-dev.pfizer.com/vessel-openai-api-v1/chatCompletion",
     )
-    llm_payload_mode: str = os.getenv(
-        "LLM_PAYLOAD_MODE",
+    vessel_openai_payload_mode: str = os.getenv(
+        "VESSEL_OPENAI_PAYLOAD_MODE",
         "model_messages",
     ).strip().lower()
-    llm_engine: str = os.getenv("LLM_ENGINE", "gpt-4o-mini")
-    llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
-    llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "10000"))
+    vessel_openai_engine: str = os.getenv("VESSEL_OPENAI_ENGINE", "gpt-4o-mini")
+    vessel_openai_temperature: float = float(os.getenv("VESSEL_OPENAI_TEMPERATURE", "0.1"))
+    vessel_openai_max_tokens: int = int(os.getenv("VESSEL_OPENAI_MAX_TOKENS", "10000"))
     token_cache_minutes: int = int(os.getenv("TOKEN_CACHE_MINUTES", "20"))
     token_request_timeout_seconds: float = float(
         os.getenv("TOKEN_REQUEST_TIMEOUT_SECONDS", "30")
@@ -94,6 +105,17 @@ class Settings:
             account_id = os.getenv(f"{prefix}ACCOUNT_ID")
             session_token = os.getenv(f"{prefix}SESSION_TOKEN")
             region = os.getenv(f"{prefix}REGION", "us-east-1")
+            secret_id = os.getenv(f"{prefix}SECRET_ID")
+
+            if secret_id:
+                secret_account = self._get_aws_account_from_secret(
+                    key=key,
+                    secret_id=secret_id,
+                    fallback_region=region,
+                )
+                if secret_account is not None:
+                    accounts[key] = secret_account
+                    continue
 
             if not access_key_id or not secret_access_key:
                 continue
@@ -109,15 +131,61 @@ class Settings:
 
         return accounts
 
+    def _get_aws_account_from_secret(
+        self,
+        *,
+        key: str,
+        secret_id: str,
+        fallback_region: str,
+    ) -> AwsAccountConfig | None:
+        region = os.getenv("AWS_SECRETS_MANAGER_REGION", fallback_region or "us-east-1")
+        try:
+            client = boto3.client("secretsmanager", region_name=region)
+            response = client.get_secret_value(SecretId=secret_id)
+            secret_string = response.get("SecretString")
+        except (BotoCoreError, ClientError, ValueError):
+            return None
+        if not secret_string:
+            return None
+
+        try:
+            payload = json.loads(secret_string)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+
+        access_key_id = self._secret_value(payload, "access_key_id", "aws_access_key_id", "ACCESS_KEY_ID")
+        secret_access_key = self._secret_value(payload, "secret_access_key", "aws_secret_access_key", "SECRET_ACCESS_KEY")
+        if not access_key_id or not secret_access_key:
+            return None
+
+        return AwsAccountConfig(
+            key=key,
+            account_id=self._secret_value(payload, "account_id", "AWS_ACCOUNT_ID"),
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            session_token=self._secret_value(payload, "session_token", "aws_session_token", "SESSION_TOKEN"),
+            region=self._secret_value(payload, "region", "AWS_REGION") or fallback_region or "us-east-1",
+        )
+
+    @staticmethod
+    def _secret_value(payload: dict, *keys: str) -> str | None:
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
     def validate_llm_settings(self) -> None:
         missing = [
             name
             for name, value in (
-                ("OAUTH_CLIENT_ID", self.oauth_client_id),
-                ("OAUTH_CLIENT_SECRET", self.oauth_client_secret),
+                ("VOX_USER", self.vox_user),
+                ("VOX_PASSWORD", self.vox_password),
                 ("TOKEN_URL", self.token_url),
-                ("LLM_API", self.llm_api),
-                ("LLM_ENGINE", self.llm_engine),
+                ("VESSEL_OPENAI_API", self.vessel_openai_api),
+                ("VESSEL_OPENAI_ENGINE", self.vessel_openai_engine),
             )
             if not value
         ]

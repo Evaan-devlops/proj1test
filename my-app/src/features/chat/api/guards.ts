@@ -10,6 +10,7 @@ import type {
   AnalyticsHubRefreshResponse,
   AnalyticsHubSnapshot,
   AnalyticsHubSnapshotResponse,
+  AnalyticsIdleResourceItem,
   AnalyticsMonthlyCostItem,
   AnalyticsServiceSpendItem,
   AwsAccountDto,
@@ -43,6 +44,10 @@ function isBoolean(value: unknown): value is boolean {
 
 function isNullableString(value: unknown): value is string | null | undefined {
   return value === undefined || value === null || typeof value === "string";
+}
+
+function isNullableNumber(value: unknown): value is number | null | undefined {
+  return value === undefined || value === null || isNumber(value);
 }
 
 function isArrayOf<T>(value: unknown, guard: (item: unknown) => item is T): value is T[] {
@@ -132,11 +137,18 @@ function isAnalyticsEcsServiceItem(value: unknown): value is AnalyticsEcsService
     isNumber(value.desired_count) &&
     isNumber(value.running_count) &&
     isNumber(value.pending_count) &&
+    isNullableNumber(value.utilization_percent) &&
+    isNullableString(value.utilization_status) &&
+    isNullableNumber(value.cpu_average_percent) &&
+    isNullableNumber(value.memory_average_percent) &&
     isNullableString(value.launch_type) &&
     isNullableString(value.task_definition) &&
     isNullableString(value.deployment_status) &&
     isAnalyticsEcsSeverity(value.severity) &&
     isString(value.insight) &&
+    isNullableString(value.reason) &&
+    isNullableString(value.solution) &&
+    isNullableString(value.console_url) &&
     isArrayOf(value.events, isString) &&
     isArrayOf(value.tasks, isAnalyticsEcsTaskItem)
   );
@@ -154,6 +166,26 @@ function isAnalyticsEcsClusterItem(value: unknown): value is AnalyticsEcsCluster
   );
 }
 
+function isAnalyticsIdleResourceItem(value: unknown): value is AnalyticsIdleResourceItem {
+  if (!isRecord(value)) return false;
+  return (
+    isString(value.resource_type) &&
+    isString(value.resource_id) &&
+    isNullableString(value.name) &&
+    isString(value.region) &&
+    isString(value.signal) &&
+    isString(value.finding) &&
+    isString(value.implication) &&
+    isString(value.suggested_action) &&
+    isAnalyticsEcsSeverity(value.severity) &&
+    isBoolean(value.idle) &&
+    isNullableNumber(value.cpu_average_percent) &&
+    isNullableNumber(value.network_average_bytes) &&
+    isNullableNumber(value.estimated_monthly_waste) &&
+    isNullableString(value.console_url)
+  );
+}
+
 function isAnalyticsHubAccountSnapshot(value: unknown): value is AnalyticsHubAccountSnapshot {
   if (!isRecord(value)) return false;
   return (
@@ -166,7 +198,8 @@ function isAnalyticsHubAccountSnapshot(value: unknown): value is AnalyticsHubAcc
     isArrayOf(value.service_spend_30d, isAnalyticsServiceSpendItem) &&
     isArrayOf(value.monthly_cost_trend, isAnalyticsMonthlyCostItem) &&
     isArrayOf(value.expiring_certificates, isAnalyticsCertificateItem) &&
-    (value.ecs_clusters === undefined || isArrayOf(value.ecs_clusters, isAnalyticsEcsClusterItem))
+    (value.ecs_clusters === undefined || isArrayOf(value.ecs_clusters, isAnalyticsEcsClusterItem)) &&
+    (value.idle_resources === undefined || isArrayOf(value.idle_resources, isAnalyticsIdleResourceItem))
   );
 }
 
@@ -210,7 +243,7 @@ export function isAnalyticsHubSnapshotResponse(value: unknown): value is Analyti
 
 export function isAnalyticsHubRefreshResponse(value: unknown): value is AnalyticsHubRefreshResponse {
   if (!isRecord(value)) return false;
-  return isBoolean(value.queued) && isBoolean(value.refresh_in_progress);
+  return isBoolean(value.queued) && isBoolean(value.refresh_in_progress) && isString(value.table_key);
 }
 
 export function isCreateChatResponse(value: unknown): value is CreateChatResponse {
