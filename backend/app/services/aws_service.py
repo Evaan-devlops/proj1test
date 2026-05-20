@@ -40,7 +40,7 @@ ANALYTICS_TABLE_FIELDS = {
     "accounts": {"project_name", "project_owner"},
     "financial": {"total_cost_30d", "service_spend_30d", "monthly_cost_trend", "project_name", "project_owner"},
     "certificates": {"expiring_certificates"},
-    "utilization": {"ecs_clusters"},
+    "utilization": {"ecs_clusters", "utilization_resources"},
     "idle": {"idle_resources"},
 }
 PROJECT_NAME_TAG_KEYS = {
@@ -62,6 +62,7 @@ PROJECT_OWNER_TAG_KEYS = {
     "team",
 }
 ECS_INSIGHT_CLUSTER_NAMES = ("test-app-ecs-cluster", "dev-app-ecs-cluster")
+UTILIZATION_RECOMMENDATION_LIMIT = 60
 AccountWorker = Callable[[AwsAccountConfig], Any]
 CachedAnalyticsValue = tuple[datetime, Any]
 
@@ -69,6 +70,7 @@ CachedAnalyticsValue = tuple[datetime, Any]
 class AwsInsightsService:
     analytics_metadata_cache_ttl = timedelta(hours=6)
     certificate_expiry_cache_ttl = timedelta(minutes=30)
+    utilization_resource_cache_ttl = timedelta(minutes=30)
 
     def __init__(self) -> None:
         self.accounts = settings.get_aws_accounts()
@@ -76,6 +78,7 @@ class AwsInsightsService:
         self._analytics_cache_lock = Lock()
         self._project_metadata_cache: dict[str, CachedAnalyticsValue] = {}
         self._certificate_expiry_cache: dict[tuple[str, int], CachedAnalyticsValue] = {}
+        self._utilization_resource_cache: dict[str, CachedAnalyticsValue] = {}
 
     def _client_factory(self, account: AwsAccountConfig) -> AwsClientFactory:
         factory = self._client_factories.get(account.key)
@@ -321,6 +324,7 @@ class AwsInsightsService:
         expiring_certificates = self._acm_expiry_worker(account, 90)
         project_metadata = self._project_metadata_worker(account)
         ecs_clusters = self._ecs_insights_worker(account)
+        utilization_resources = self._utilization_resources_worker(account)
 
         sorted_services = sorted(service_costs.items(), key=lambda item: item[1], reverse=True)
         service_rows = [
@@ -342,6 +346,7 @@ class AwsInsightsService:
             "monthly_cost_trend": monthly_cost_trend,
             "expiring_certificates": expiring_certificates,
             "ecs_clusters": ecs_clusters,
+            "utilization_resources": utilization_resources,
             "idle_resources": self._idle_resources_worker(account, IdleResourcesRequest(max_resources=50))["resources"],
         }
 
@@ -384,6 +389,7 @@ class AwsInsightsService:
             return {
                 **base,
                 "ecs_clusters": self._ecs_insights_worker(account),
+                "utilization_resources": self._utilization_resources_worker(account),
             }
         if table_key == "idle":
             return {
@@ -817,6 +823,52 @@ class AwsInsightsService:
     def _ec2_console_url(region: str, instance_id: str) -> str:
         return f"https://{region}.console.aws.amazon.com/ec2/home?region={region}#InstanceDetails:instanceId={instance_id}"
 
+    @staticmethod
+    def _aws_error_code(exc: Exception) -> str:
+        if isinstance(exc, ClientError):
+            return str(exc.response.get("Error", {}).get("Code") or "")
+        return exc.__class__.__name__
+
+    @staticmethod
+    def _region_from_arn(arn: str | None) -> str | None:
+        if not arn:
+            return None
+        parts = arn.split(":")
+        if len(parts) > 3 and parts[3]:
+            return parts[3]
+        return None
+
+    @staticmethod
+    def _resource_id_from_arn(arn: str | None) -> str | None:
+        if not arn:
+            return None
+        resource = arn.split(":", 5)[-1]
+        if "/" in resource:
+            return resource.rsplit("/", 1)[-1]
+        if ":" in resource:
+            return resource.rsplit(":", 1)[-1]
+        return resource or None
+
+    @staticmethod
+    def _console_url_for_resource(region: str, resource_type: str, arn: str | None, resource_id: str) -> str | None:
+        resolved_region = AwsInsightsService._region_from_arn(arn) or region
+        if resource_type == "EC2 instance":
+            return AwsInsightsService._ec2_console_url(resolved_region, resource_id)
+        if resource_type == "EBS volume":
+            return f"https://{resolved_region}.console.aws.amazon.com/ec2/home?region={resolved_region}#VolumeDetails:volumeId={resource_id}"
+        if resource_type == "Lambda function":
+            return f"https://{resolved_region}.console.aws.amazon.com/lambda/home?region={resolved_region}#/functions/{resource_id}"
+        if resource_type == "ECS service" and arn:
+            parts = arn.split("/")
+            if len(parts) >= 3:
+                cluster_name = parts[-2]
+                service_name = parts[-1]
+                return (
+                    f"https://{resolved_region}.console.aws.amazon.com/ecs/v2/clusters/"
+                    f"{cluster_name}/services/{service_name}/health?region={resolved_region}"
+                )
+        return None
+
     def _trends_forecast_worker(self, account: AwsAccountConfig, days: int) -> dict[str, Any]:
         client = self._client_factory(account).ce()
         start, end = self._date_range(days)
@@ -963,6 +1015,249 @@ class AwsInsightsService:
 
         resources.sort(key=lambda item: (self._severity_rank(item["severity"]), item["resource_id"]))
         return {"resources": resources[: payload.max_resources]}
+
+    def _utilization_resources_worker(self, account: AwsAccountConfig) -> list[dict[str, Any]]:
+        cached_rows = self._get_cached_analytics_value(
+            self._utilization_resource_cache,
+            account.key,
+            self.utilization_resource_cache_ttl,
+        )
+        if cached_rows is not None:
+            return cached_rows
+
+        client = self._client_factory(account).compute_optimizer()
+        rows: list[dict[str, Any]] = []
+        collectors = (
+            ("EC2 instance", "get_ec2_instance_recommendations", "instanceRecommendations"),
+            ("EBS volume", "get_ebs_volume_recommendations", "volumeRecommendations"),
+            ("Lambda function", "get_lambda_function_recommendations", "functionRecommendations"),
+            ("ECS service", "get_ecs_service_recommendations", "serviceRecommendations"),
+        )
+
+        for resource_type, operation_name, result_key in collectors:
+            rows.extend(
+                self._compute_optimizer_rows(
+                    account=account,
+                    client=client,
+                    resource_type=resource_type,
+                    operation_name=operation_name,
+                    result_key=result_key,
+                )
+            )
+
+        rows = [row for row in rows if row["utilization_status"] in {"underused", "overused"}]
+        rows.sort(key=lambda item: (self._severity_rank(item["severity"]), item["resource_type"], item["resource_id"]))
+        trimmed_rows = rows[:UTILIZATION_RECOMMENDATION_LIMIT]
+        self._set_cached_analytics_value(self._utilization_resource_cache, account.key, trimmed_rows)
+        return trimmed_rows
+
+    def _compute_optimizer_rows(
+        self,
+        *,
+        account: AwsAccountConfig,
+        client: Any,
+        resource_type: str,
+        operation_name: str,
+        result_key: str,
+    ) -> list[dict[str, Any]]:
+        operation = getattr(client, operation_name, None)
+        if operation is None:
+            return []
+
+        rows: list[dict[str, Any]] = []
+        next_token: str | None = None
+        while True:
+            try:
+                request: dict[str, Any] = {"maxResults": 100}
+                if next_token:
+                    request["nextToken"] = next_token
+                response = operation(**request)
+            except (ClientError, BotoCoreError) as exc:
+                error_code = self._aws_error_code(exc)
+                if error_code in {"AccessDeniedException", "OptInRequiredException", "ResourceNotFoundException"}:
+                    logger.info(
+                        "Compute Optimizer %s unavailable for account %s: %s",
+                        operation_name,
+                        account.key,
+                        error_code,
+                    )
+                    return rows
+                logger.warning(
+                    "Compute Optimizer %s failed for account %s.",
+                    operation_name,
+                    account.key,
+                    exc_info=True,
+                )
+                return rows
+
+            for recommendation in response.get(result_key, []):
+                item = self._compute_optimizer_resource_item(
+                    account=account,
+                    resource_type=resource_type,
+                    recommendation=recommendation,
+                )
+                if item is not None:
+                    rows.append(item)
+
+            next_token = response.get("nextToken")
+            if not next_token or len(rows) >= UTILIZATION_RECOMMENDATION_LIMIT:
+                return rows
+
+    def _compute_optimizer_resource_item(
+        self,
+        *,
+        account: AwsAccountConfig,
+        resource_type: str,
+        recommendation: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        finding = str(recommendation.get("finding") or "").strip()
+        utilization_status = self._compute_optimizer_utilization_status(finding)
+        if utilization_status is None:
+            return None
+
+        arn = self._compute_optimizer_resource_arn(recommendation)
+        resource_id = self._resource_id_from_arn(arn) or self._compute_optimizer_resource_name(recommendation)
+        if not resource_id:
+            return None
+
+        reason_codes = [
+            str(item)
+            for item in recommendation.get("findingReasonCodes", [])
+            if item is not None
+        ]
+        metrics = self._compute_optimizer_metrics(recommendation)
+        current_configuration = self._compute_optimizer_current_configuration(recommendation)
+        recommended_configuration = self._compute_optimizer_recommended_configuration(recommendation)
+        severity = self._compute_optimizer_severity(utilization_status, reason_codes)
+        reason = self._compute_optimizer_reason(
+            utilization_status=utilization_status,
+            finding=finding,
+            reason_codes=reason_codes,
+            metrics=metrics,
+        )
+
+        return {
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "resource_name": self._compute_optimizer_resource_name(recommendation),
+            "region": self._region_from_arn(arn) or account.region,
+            "utilization_status": utilization_status,
+            "severity": severity,
+            "finding": finding or utilization_status,
+            "reason": reason,
+            "suggested_action": self._compute_optimizer_suggested_action(
+                resource_type=resource_type,
+                utilization_status=utilization_status,
+                recommended_configuration=recommended_configuration,
+            ),
+            "source": "AWS Compute Optimizer",
+            "current_configuration": current_configuration,
+            "recommended_configuration": recommended_configuration,
+            "metrics": metrics,
+            "console_url": self._console_url_for_resource(account.region, resource_type, arn, resource_id),
+        }
+
+    @staticmethod
+    def _compute_optimizer_utilization_status(finding: str) -> str | None:
+        normalized = finding.strip().lower()
+        if normalized in {"overprovisioned"}:
+            return "underused"
+        if normalized in {"underprovisioned"}:
+            return "overused"
+        return None
+
+    @staticmethod
+    def _compute_optimizer_severity(utilization_status: str, reason_codes: list[str]) -> str:
+        if utilization_status == "overused":
+            return "critical"
+        if any("Cpu" in code or "Memory" in code for code in reason_codes):
+            return "warning"
+        return "warning"
+
+    @staticmethod
+    def _compute_optimizer_reason(
+        *,
+        utilization_status: str,
+        finding: str,
+        reason_codes: list[str],
+        metrics: dict[str, float],
+    ) -> str:
+        reason_text = ", ".join(reason_codes) if reason_codes else finding
+        metric_text = ", ".join(f"{name}={value}" for name, value in metrics.items())
+        if utilization_status == "overused":
+            base = "AWS Compute Optimizer reports under-provisioning, which means demand is exceeding the current resource shape."
+        else:
+            base = "AWS Compute Optimizer reports over-provisioning, which means the resource has more capacity than recent workload needs."
+        return f"{base} Reason codes: {reason_text or 'not provided'}.{f' Metrics: {metric_text}.' if metric_text else ''}"
+
+    @staticmethod
+    def _compute_optimizer_suggested_action(
+        *,
+        resource_type: str,
+        utilization_status: str,
+        recommended_configuration: dict[str, object] | None,
+    ) -> str:
+        recommendation = f" Target recommendation: {recommended_configuration}." if recommended_configuration else ""
+        if utilization_status == "overused":
+            return (
+                f"Increase or scale out the {resource_type.lower()}, validate autoscaling limits, and watch latency/error metrics after the change."
+                f"{recommendation}"
+            )
+        return (
+            f"Rightsize the {resource_type.lower()}, lower minimum capacity where applicable, and confirm business schedules before reducing capacity."
+            f"{recommendation}"
+        )
+
+    @staticmethod
+    def _compute_optimizer_resource_arn(recommendation: dict[str, Any]) -> str | None:
+        for key in ("instanceArn", "volumeArn", "functionArn", "serviceArn", "autoScalingGroupArn"):
+            value = recommendation.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    @staticmethod
+    def _compute_optimizer_resource_name(recommendation: dict[str, Any]) -> str | None:
+        for key in ("functionVersion", "autoScalingGroupName", "serviceArn", "functionArn", "instanceArn", "volumeArn"):
+            value = recommendation.get(key)
+            if isinstance(value, str) and value:
+                return value.rsplit("/", 1)[-1]
+        return None
+
+    @staticmethod
+    def _compute_optimizer_metrics(recommendation: dict[str, Any]) -> dict[str, float]:
+        metrics: dict[str, float] = {}
+        for item in recommendation.get("utilizationMetrics", []):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            value = item.get("value")
+            if isinstance(name, str) and isinstance(value, int | float):
+                metrics[name] = round(float(value), 2)
+        return metrics
+
+    @staticmethod
+    def _compute_optimizer_current_configuration(recommendation: dict[str, Any]) -> dict[str, object]:
+        for key in ("currentConfiguration", "currentServiceConfiguration", "currentPerformanceRisk"):
+            value = recommendation.get(key)
+            if isinstance(value, dict):
+                return value
+        config: dict[str, object] = {}
+        for key in ("currentInstanceType", "currentMemorySize", "currentPerformanceRisk"):
+            value = recommendation.get(key)
+            if value is not None:
+                config[key] = value
+        return config
+
+    @staticmethod
+    def _compute_optimizer_recommended_configuration(recommendation: dict[str, Any]) -> dict[str, object] | None:
+        for key in ("recommendationOptions", "volumeRecommendationOptions", "serviceRecommendationOptions"):
+            options = recommendation.get(key)
+            if isinstance(options, list) and options:
+                first_option = options[0]
+                if isinstance(first_option, dict):
+                    return first_option
+        return None
 
     def _acm_expiry_worker(self, account: AwsAccountConfig, days: int) -> list[dict[str, Any]]:
         cache_key = (account.key, days)

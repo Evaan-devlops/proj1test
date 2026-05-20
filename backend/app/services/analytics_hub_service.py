@@ -144,7 +144,7 @@ class AnalyticsHubSnapshotService:
             "accounts": {"project_name", "project_owner"},
             "financial": {"total_cost_30d", "service_spend_30d", "monthly_cost_trend", "project_name", "project_owner"},
             "certificates": {"expiring_certificates"},
-            "utilization": {"ecs_clusters"},
+            "utilization": {"ecs_clusters", "utilization_resources"},
             "idle": {"idle_resources"},
         }.get(table_key, set())
 
@@ -170,6 +170,7 @@ class AnalyticsHubSnapshotService:
             "monthly_cost_trend": account.get("monthly_cost_trend") or [],
             "expiring_certificates": account.get("expiring_certificates") or [],
             "ecs_clusters": account.get("ecs_clusters") or [],
+            "utilization_resources": account.get("utilization_resources") or [],
             "idle_resources": account.get("idle_resources") or [],
         }
 

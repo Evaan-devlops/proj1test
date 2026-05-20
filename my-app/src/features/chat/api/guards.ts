@@ -13,6 +13,7 @@ import type {
   AnalyticsIdleResourceItem,
   AnalyticsMonthlyCostItem,
   AnalyticsServiceSpendItem,
+  AnalyticsUtilizationResourceItem,
   AwsAccountDto,
   ChatMessageDto,
   ChatSummary,
@@ -52,6 +53,10 @@ function isNullableNumber(value: unknown): value is number | null | undefined {
 
 function isArrayOf<T>(value: unknown, guard: (item: unknown) => item is T): value is T[] {
   return Array.isArray(value) && value.every((item) => guard(item));
+}
+
+function isNumberRecord(value: unknown): value is Record<string, number> {
+  return isRecord(value) && Object.values(value).every(isNumber);
 }
 
 function isChatSummary(value: unknown): value is ChatSummary {
@@ -186,6 +191,26 @@ function isAnalyticsIdleResourceItem(value: unknown): value is AnalyticsIdleReso
   );
 }
 
+function isAnalyticsUtilizationResourceItem(value: unknown): value is AnalyticsUtilizationResourceItem {
+  if (!isRecord(value)) return false;
+  return (
+    isString(value.resource_type) &&
+    isString(value.resource_id) &&
+    isNullableString(value.resource_name) &&
+    isString(value.region) &&
+    isString(value.utilization_status) &&
+    isAnalyticsEcsSeverity(value.severity) &&
+    isString(value.finding) &&
+    isString(value.reason) &&
+    isString(value.suggested_action) &&
+    isString(value.source) &&
+    (value.current_configuration === undefined || isRecord(value.current_configuration)) &&
+    (value.recommended_configuration === undefined || value.recommended_configuration === null || isRecord(value.recommended_configuration)) &&
+    isNumberRecord(value.metrics) &&
+    isNullableString(value.console_url)
+  );
+}
+
 function isAnalyticsHubAccountSnapshot(value: unknown): value is AnalyticsHubAccountSnapshot {
   if (!isRecord(value)) return false;
   return (
@@ -199,6 +224,7 @@ function isAnalyticsHubAccountSnapshot(value: unknown): value is AnalyticsHubAcc
     isArrayOf(value.monthly_cost_trend, isAnalyticsMonthlyCostItem) &&
     isArrayOf(value.expiring_certificates, isAnalyticsCertificateItem) &&
     (value.ecs_clusters === undefined || isArrayOf(value.ecs_clusters, isAnalyticsEcsClusterItem)) &&
+    (value.utilization_resources === undefined || isArrayOf(value.utilization_resources, isAnalyticsUtilizationResourceItem)) &&
     (value.idle_resources === undefined || isArrayOf(value.idle_resources, isAnalyticsIdleResourceItem))
   );
 }

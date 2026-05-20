@@ -8,6 +8,7 @@ import type {
   AnalyticsHubAccountError,
   AnalyticsHubAccountSnapshot,
   AnalyticsHubSnapshot,
+  AnalyticsUtilizationResourceItem,
 } from "src/features/chat/api/types";
 import { useChatStore } from "src/store/chat.store";
 import { useUiStore } from "src/store/ui.store";
@@ -1378,6 +1379,8 @@ type UtilizationInsightRow = {
   account: string;
   cluster: string;
   service: string;
+  resourceType: string;
+  source: string;
   desired: number;
   running: number;
   pending: number;
@@ -1456,9 +1459,54 @@ function utilizationRecommendation(service: AnalyticsEcsServiceItem) {
   return "Healthy utilization: running task count matches desired capacity.";
 }
 
+function formatUtilizationMetrics(metrics: Record<string, number>) {
+  return Object.entries(metrics)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+}
+
+function utilizationResourceDisplayName(resource: AnalyticsUtilizationResourceItem) {
+  return resource.resource_name || resource.resource_id;
+}
+
 function flattenUtilizationInsights(accounts: AnalyticsHubAccountSnapshot[]) {
   const rows: UtilizationInsightRow[] = [];
   for (const account of accounts) {
+    for (const resource of account.utilization_resources ?? []) {
+      const metricsText = formatUtilizationMetrics(resource.metrics);
+      rows.push({
+        account: formatAccountLabel(account.account_key),
+        cluster: resource.source,
+        service: utilizationResourceDisplayName(resource),
+        resourceType: resource.resource_type,
+        source: resource.source,
+        desired: 0,
+        running: 0,
+        pending: 0,
+        utilizationPct:
+          resource.utilization_status === "overused"
+            ? 100
+            : resource.utilization_status === "underused"
+              ? 15
+              : 50,
+        utilizationStatus: resource.utilization_status,
+        cpuAveragePct: resource.metrics.CPU ?? resource.metrics.CPUUtilization ?? null,
+        memoryAveragePct: resource.metrics.Memory ?? resource.metrics.MemoryUtilization ?? null,
+        severity: resource.severity,
+        recommendation: resource.suggested_action,
+        reason: resource.reason,
+        solution: resource.suggested_action,
+        consoleUrl: resource.console_url ?? null,
+        evidence: [
+          `${resource.resource_type} ${resource.finding}`,
+          resource.reason,
+          metricsText ? `metrics=${metricsText}` : "",
+          resource.recommended_configuration ? `recommendation=${JSON.stringify(resource.recommended_configuration)}` : "",
+        ]
+          .filter(Boolean)
+          .join("; "),
+      });
+    }
     for (const cluster of account.ecs_clusters ?? []) {
       for (const service of cluster.services) {
         const utilizationPct = Math.round(service.utilization_percent ?? (service.desired_count > 0 ? (service.running_count / service.desired_count) * 100 : 0));
@@ -1468,6 +1516,8 @@ function flattenUtilizationInsights(accounts: AnalyticsHubAccountSnapshot[]) {
           account: formatAccountLabel(account.account_key),
           cluster: cluster.cluster_name,
           service: service.service_name,
+          resourceType: "ECS service",
+          source: "AWS ECS and CloudWatch",
           desired: service.desired_count,
           running: service.running_count,
           pending: service.pending_count,
@@ -1515,7 +1565,7 @@ function utilizationFallbackAnalysis(rows: UtilizationInsightRow[]) {
   if (warning.length > 0) {
     return `${warning.length} service(s) have utilization warnings. Review pending tasks, deployment state, and non-healthy task events before scaling decisions.`;
   }
-  return "Selected ECS services are aligned with desired running capacity. No underused or overpressured service is currently visible in the stored snapshot.";
+  return "Selected resources are aligned with their current capacity. No underused or overused resource is currently visible in the stored snapshot.";
 }
 
 function buildUtilizationLlmContext(rows: UtilizationInsightRow[]) {
@@ -1538,7 +1588,7 @@ function buildUtilizationLlmContext(rows: UtilizationInsightRow[]) {
   }));
   return JSON.stringify(
     {
-      source: "Analytics Hub ECS snapshot built from AWS ECS describe_clusters, list_services, describe_services, list_tasks, and describe_tasks.",
+      source: "Analytics Hub utilization snapshot built from AWS Compute Optimizer recommendations plus ECS and CloudWatch service health.",
       row_count: rows.length,
       rows: dataRows,
     },
@@ -1738,15 +1788,19 @@ function UtilizationInsightsCard({
   const tableRows = rows.map((row) => [
     row.account,
     row.cluster,
-    row.service,
-    `${row.running}/${row.desired}`,
-    row.pending ? String(row.pending) : "0",
+    <div key={`${row.account}-${row.cluster}-${row.service}-resource`} className="min-w-0">
+      <div className="font-semibold text-slate-900">{row.service}</div>
+      <div className="text-xs text-slate-500">{row.resourceType}</div>
+    </div>,
+    row.desired > 0 || row.running > 0 ? `${row.running}/${row.desired}` : "-",
+    row.pending ? String(row.pending) : "-",
     <UtilizationBar key={`${row.account}-${row.cluster}-${row.service}-bar`} percent={row.utilizationPct} status={row.utilizationStatus} />,
     <SeverityBadge key={`${row.account}-${row.cluster}-${row.service}-severity`} severity={row.severity} />,
     <div key={`${row.account}-${row.cluster}-${row.service}-reason`} className="max-w-xl">
       <div className="font-medium text-slate-900">{row.reason}</div>
       <div className="mt-1 text-slate-600">{row.solution}</div>
       <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+        <span>{row.source}</span>
         {row.cpuAveragePct != null ? <span>CPU {row.cpuAveragePct}%</span> : null}
         {row.memoryAveragePct != null ? <span>Memory {row.memoryAveragePct}%</span> : null}
         {row.consoleUrl ? (
@@ -1772,9 +1826,9 @@ function UtilizationInsightsCard({
   return (
     <DataCard
       title="Utilization Insights"
-      headers={["Account", "Cluster", "Service", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"]}
+      headers={["Account", "Source", "Resource", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"]}
       rows={tableRows}
-      emptyText="No ECS utilization rows are available yet. Refresh Analytics Hub after AWS credentials are configured."
+      emptyText="No utilization rows are available yet. Refresh Analytics Hub after AWS credentials and Compute Optimizer access are configured."
       updatedLabel={updatedLabel}
       onRefresh={onRefresh}
       onDiscuss={onDiscuss}
@@ -1793,7 +1847,7 @@ function UtilizationInsightsCard({
         <table className="min-w-full border-collapse text-sm text-slate-800">
           <thead>
             <tr className="border-b border-slate-300/35 text-left text-[11px] uppercase tracking-[0.22em] text-slate-500">
-              {["Account", "Cluster", "Service", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"].map((header) => (
+              {["Account", "Source", "Resource", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"].map((header) => (
                 <th key={header} className="px-4 py-4 font-semibold">
                   {header}
                 </th>
@@ -1814,7 +1868,7 @@ function UtilizationInsightsCard({
             ) : (
               <tr>
                 <td colSpan={8} className="px-4 py-7 text-slate-500">
-                  No ECS utilization rows are available yet. Refresh Analytics Hub after AWS credentials are configured.
+                  No utilization rows are available yet. Refresh Analytics Hub after AWS credentials and Compute Optimizer access are configured.
                 </td>
               </tr>
             )}
@@ -1889,7 +1943,7 @@ function UtilizationInsightsModal({
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold text-slate-900">{row.service}</div>
-                        <div className="truncate text-xs text-slate-500">{row.account} / {row.cluster}</div>
+                        <div className="truncate text-xs text-slate-500">{row.account} / {row.resourceType}</div>
                       </div>
                       <div className="text-sm font-semibold text-slate-700">{row.utilizationPct}%</div>
                     </div>
@@ -1937,7 +1991,7 @@ function UtilizationInsightsModal({
                           </span>
                           <span className="min-w-0">
                             <span className="block truncate text-sm font-semibold">{row.service}</span>
-                            <span className="block truncate text-xs text-slate-500">{row.account} / {row.cluster}</span>
+                            <span className="block truncate text-xs text-slate-500">{row.account} / {row.resourceType} / {row.source}</span>
                           </span>
                         </span>
                         <span className="w-32 shrink-0">
@@ -2276,10 +2330,10 @@ export default function AnalyticsHub({
     () =>
       utilizationRows.map((row) => [
         row.account,
-        row.cluster,
-        row.service,
-        `${row.running}/${row.desired}`,
-        String(row.pending),
+        row.source,
+        `${row.resourceType}: ${row.service}`,
+        row.desired > 0 || row.running > 0 ? `${row.running}/${row.desired}` : "-",
+        row.pending ? String(row.pending) : "-",
         `${row.utilizationPct}% ${row.utilizationStatus}`,
         row.severity,
         `${row.reason} Solution: ${row.solution}`,
@@ -2468,7 +2522,7 @@ export default function AnalyticsHub({
           onDiscuss={() =>
             void openTableDiscussion(
               "Utilization Insights",
-              ["Account", "Cluster", "Service", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"],
+              ["Account", "Source", "Resource", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"],
               utilizationDiscussionRows,
             )
           }
@@ -2685,7 +2739,7 @@ export default function AnalyticsHub({
             onDiscuss={() =>
               void openTableDiscussion(
                 "Utilization Insights",
-                ["Account", "Cluster", "Service", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"],
+                ["Account", "Source", "Resource", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"],
                 utilizationDiscussionRows,
               )
             }

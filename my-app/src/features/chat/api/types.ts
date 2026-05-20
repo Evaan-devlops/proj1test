@@ -143,6 +143,23 @@ export type AnalyticsIdleResourceItem = {
   console_url?: string | null;
 };
 
+export type AnalyticsUtilizationResourceItem = {
+  resource_type: string;
+  resource_id: string;
+  resource_name?: string | null;
+  region: string;
+  utilization_status: "underused" | "balanced" | "overused" | string;
+  severity: AnalyticsEcsSeverity;
+  finding: string;
+  reason: string;
+  suggested_action: string;
+  source: string;
+  current_configuration: Record<string, unknown>;
+  recommended_configuration?: Record<string, unknown> | null;
+  metrics: Record<string, number>;
+  console_url?: string | null;
+};
+
 export type AnalyticsHubAccountSnapshot = {
   account_key: string;
   account_id: string;
@@ -154,6 +171,7 @@ export type AnalyticsHubAccountSnapshot = {
   monthly_cost_trend: AnalyticsMonthlyCostItem[];
   expiring_certificates: AnalyticsCertificateItem[];
   ecs_clusters: AnalyticsEcsClusterItem[];
+  utilization_resources: AnalyticsUtilizationResourceItem[];
   idle_resources: AnalyticsIdleResourceItem[];
 };
 
