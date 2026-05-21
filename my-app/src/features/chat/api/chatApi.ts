@@ -5,6 +5,7 @@ import type {
   AccountListResponse,
   AnalyticsHubRefreshResponse,
   AnalyticsHubSnapshotResponse,
+  AnalyticsHubStorageStatus,
   ChatStreamRequest,
   CreateChatRequest,
   CreateChatResponse,
@@ -24,6 +25,7 @@ import {
   isAccountListResponse,
   isAnalyticsHubRefreshResponse,
   isAnalyticsHubSnapshotResponse,
+  isAnalyticsHubStorageStatus,
   isCreateChatResponse,
   isDeleteChatResponse,
   isHealthResponse,
@@ -96,6 +98,15 @@ export const chatApi = {
       { method: "POST", body: { table_key: tableKey } },
       isAnalyticsHubRefreshResponse,
       "Analytics refresh response had an unexpected format.",
+    );
+  },
+
+  getAnalyticsHubStorageStatus() {
+    return requestValidated<AnalyticsHubStorageStatus>(
+      "/api/v1/aws/analytics-hub/storage-status",
+      { method: "GET" },
+      isAnalyticsHubStorageStatus,
+      "Analytics storage status response had an unexpected format.",
     );
   },
 

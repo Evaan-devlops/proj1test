@@ -185,6 +185,16 @@ class ToolRoutingService:
             raw_score += 2.0
         if tool.tool_name == "ec2_idle_check" and re.search(r"\bi-[a-z0-9]+\b", lowered_query):
             raw_score += 2.0
+        if tool.tool_name == "analytics_hub_snapshot" and any(
+            term in lowered_query
+            for term in ("analytics hub", "cockpit", "priority queue", "current findings", "dashboard")
+        ):
+            raw_score += 2.0
+        if tool.tool_name == "analytics_hub_storage_status" and any(
+            term in lowered_query
+            for term in ("sqlite", "storage status", "db connected", "database connected", "jsonl fallback")
+        ):
+            raw_score += 2.0
         if tool.tool_name == "idle_resources" and any(term in lowered_query for term in ("idle", "unused", "underused", "waste")):
             raw_score += 1.0
         if tool.tool_name == "certificate_expiry" and any(term in lowered_query for term in ("certificate", "acm", "tls", "ssl")):
@@ -209,6 +219,14 @@ class ToolRoutingService:
         if tool.tool_name == "accounts":
             if "account" in lowered_query or "environment" in lowered_query:
                 score += 0.80
+        elif tool.tool_name == "analytics_hub_snapshot":
+            if any(term in lowered_query for term in ("analytics hub", "cockpit", "priority queue", "current findings", "dashboard")):
+                score += 0.90
+            if any(term in lowered_query for term in ("utilization insights", "certificate watch", "resource doctor")):
+                score += 0.45
+        elif tool.tool_name == "analytics_hub_storage_status":
+            if any(term in lowered_query for term in ("sqlite", "database", "db", "storage", "jsonl", "fallback", "data folder")):
+                score += 0.90
         elif tool.tool_name == "cost_breakdown":
             if re.search(r"\btop\s+\d+", lowered_query):
                 score += 0.45

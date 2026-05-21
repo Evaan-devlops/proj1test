@@ -200,6 +200,20 @@ export type AnalyticsHubRefreshResponse = {
   table_key: string;
 };
 
+export type AnalyticsHubStorageStatus = {
+  sqlite_enabled: boolean;
+  db_connected?: boolean;
+  db_file: string;
+  db_exists: boolean;
+  table_counts: Record<string, number>;
+  last_refresh_run?: Record<string, unknown> | null;
+  json_snapshot_exists: boolean;
+  jsonl_table_cache_exists: boolean;
+  active_storage_source: "sqlite" | "jsonl_fallback" | string;
+  portable_mode?: boolean;
+  portable_note?: string;
+};
+
 export type ChatStreamRequest = {
   userText: string;
   clientMessageId?: string;

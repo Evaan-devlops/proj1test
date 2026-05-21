@@ -226,8 +226,8 @@ class AwsInsightsService:
             },
         )
 
-    async def build_analytics_hub_snapshot(self) -> dict[str, Any]:
-        accounts = self._resolve_accounts(None)
+    async def build_analytics_hub_snapshot(self, account_keys: list[str] | None = None) -> dict[str, Any]:
+        accounts = self._resolve_accounts(account_keys)
         semaphore = asyncio.Semaphore(settings.max_parallel_accounts)
 
         async def run(account: AwsAccountConfig) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -254,16 +254,16 @@ class AwsInsightsService:
             "errors": errors,
         }
 
-    async def build_analytics_hub_table_snapshot(self, table_key: str) -> dict[str, Any]:
+    async def build_analytics_hub_table_snapshot(self, table_key: str, account_keys: list[str] | None = None) -> dict[str, Any]:
         normalized_table_key = table_key.strip().lower()
         if normalized_table_key == "all":
-            return await self.build_analytics_hub_snapshot()
+            return await self.build_analytics_hub_snapshot(account_keys)
         if normalized_table_key not in ANALYTICS_TABLE_FIELDS:
             raise ValueError(
                 "Unsupported Analytics Hub table refresh. Use all, accounts, financial, certificates, utilization, or idle."
             )
 
-        accounts = self._resolve_accounts(None)
+        accounts = self._resolve_accounts(account_keys)
         semaphore = asyncio.Semaphore(settings.max_parallel_accounts)
 
         async def run(account: AwsAccountConfig) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:

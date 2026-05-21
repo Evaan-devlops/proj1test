@@ -10,6 +10,7 @@ import type {
   AnalyticsHubRefreshResponse,
   AnalyticsHubSnapshot,
   AnalyticsHubSnapshotResponse,
+  AnalyticsHubStorageStatus,
   AnalyticsIdleResourceItem,
   AnalyticsMonthlyCostItem,
   AnalyticsServiceSpendItem,
@@ -270,6 +271,22 @@ export function isAnalyticsHubSnapshotResponse(value: unknown): value is Analyti
 export function isAnalyticsHubRefreshResponse(value: unknown): value is AnalyticsHubRefreshResponse {
   if (!isRecord(value)) return false;
   return isBoolean(value.queued) && isBoolean(value.refresh_in_progress) && isString(value.table_key);
+}
+
+export function isAnalyticsHubStorageStatus(value: unknown): value is AnalyticsHubStorageStatus {
+  if (!isRecord(value) || !isRecord(value.table_counts)) return false;
+  return (
+    isBoolean(value.sqlite_enabled) &&
+    (value.db_connected === undefined || isBoolean(value.db_connected)) &&
+    isString(value.db_file) &&
+    isBoolean(value.db_exists) &&
+    Object.values(value.table_counts).every(isNumber) &&
+    isBoolean(value.json_snapshot_exists) &&
+    isBoolean(value.jsonl_table_cache_exists) &&
+    isString(value.active_storage_source) &&
+    (value.portable_mode === undefined || isBoolean(value.portable_mode)) &&
+    (value.portable_note === undefined || isString(value.portable_note))
+  );
 }
 
 export function isCreateChatResponse(value: unknown): value is CreateChatResponse {

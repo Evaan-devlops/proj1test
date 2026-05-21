@@ -8,6 +8,7 @@ import type {
   AnalyticsHubAccountError,
   AnalyticsHubAccountSnapshot,
   AnalyticsHubSnapshot,
+  AnalyticsHubStorageStatus,
   AnalyticsUtilizationResourceItem,
 } from "src/features/chat/api/types";
 import { useChatStore } from "src/store/chat.store";
@@ -75,6 +76,20 @@ function BarChartIcon() {
   );
 }
 
+function StatusPulseIcon({ active }: { active: boolean }) {
+  return (
+    <span
+      className={classNames(
+        "h-2.5 w-2.5 rounded-full",
+        active
+          ? "animate-pulse bg-sky-500 shadow-[0_0_18px_rgba(14,165,233,0.72)]"
+          : "bg-emerald-500 shadow-[0_0_14px_rgba(16,185,129,0.52)]",
+      )}
+      aria-hidden="true"
+    />
+  );
+}
+
 function TableIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
@@ -86,7 +101,7 @@ function TableIcon() {
 function FeatureIcon({
   type,
 }: {
-  type: "idle" | "certificate" | "utilization" | "recommendation" | "chat" | "plan" | "priority";
+  type: "idle" | "certificate" | "utilization" | "recommendation" | "chat" | "priority" | "financial" | "ecs";
 }) {
   const paths = {
     idle: "M7 18a4 4 0 0 1-.72-7.94A6 6 0 0 1 17.78 8.7 4.5 4.5 0 0 1 18 18H7z",
@@ -96,8 +111,9 @@ function FeatureIcon({
     recommendation:
       "M12 3a6 6 0 0 1 3.6 10.8c-.7.5-1.1 1.2-1.1 2V16h-5v-.2c0-.8-.4-1.5-1.1-2A6 6 0 0 1 12 3zm-2.5 15h5v2h-5v-2z",
     chat: "M5 5h14v9H9l-4 4V5zm4 3v2h6V8H9zm0 3v2h4v-2H9z",
-    plan: "M8 5h11v2H8V5zm0 6h11v2H8v-2zm0 6h11v2H8v-2zM4 5h2v2H4V5zm0 6h2v2H4v-2zm0 6h2v2H4v-2z",
     priority: "M5 4l2 1h10v9H8l-3-1v7H3V4h2z",
+    financial: "M4 18h16v2H4v-2zm2-2V8h3v8H6zm5 0V4h3v12h-3zm5 0v-6h3v6h-3z",
+    ecs: "M12 3l7 4v10l-7 4-7-4V7l7-4zm0 2.3L7 8.1v5.8l5 2.8 5-2.8V8.1l-5-2.8z",
   };
 
   return (
@@ -135,17 +151,12 @@ function classNames(...values: Array<string | false | null | undefined>) {
 }
 
 const glassPanelClass =
-  "relative overflow-hidden rounded-[34px] border border-white/45 bg-[linear-gradient(180deg,rgba(255,255,255,0.38),rgba(214,230,255,0.18))] shadow-[0_28px_90px_rgba(15,23,42,0.18)] backdrop-blur-[24px]";
+  "relative overflow-hidden rounded-[24px] border border-white/55 bg-[linear-gradient(180deg,rgba(255,255,255,0.62),rgba(226,238,255,0.34))] shadow-[0_22px_70px_rgba(15,23,42,0.13)] backdrop-blur-[22px]";
 
 const glassButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/55 bg-white/55 text-slate-700 shadow-[0_10px_22px_rgba(148,163,184,0.14)] transition hover:bg-white/68 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500";
 
 const featureTabs = [
-  {
-    title: "Detect Idle Resources",
-    description: "Stop cloud waste before it impacts your budget.",
-    icon: "idle",
-  },
   {
     title: "Certificate Expiry Watch",
     description: "Track expiring certificates and act before service disruption.",
@@ -153,125 +164,162 @@ const featureTabs = [
   },
   {
     title: "Utilization Insights",
-    description: "Spot underused and overused resources for better capacity planning.",
+    description: "Review underused and overused resources from AWS signals.",
     icon: "utilization",
   },
   {
+    title: "Idle Resource Detector",
+    description: "Stop cloud waste before it impacts your budget.",
+    icon: "idle",
+  },
+  {
+    title: "Financial Impact",
+    description: "Open selected spend drivers and service cost concentration.",
+    icon: "financial",
+  },
+  {
+    title: "ECS Health",
+    description: "Inspect ECS clusters, services, tasks, and account context.",
+    icon: "ecs",
+  },
+  {
+    title: "Priority Action Queue",
+    description: "Work the highest-risk findings first with evidence and actions.",
+    icon: "priority",
+  },
+  {
     title: "Proactive Recommendations",
-    description: "Get early suggestions to prevent upcoming issues.",
+    description: "Review optimization opportunities from current signals.",
     icon: "recommendation",
   },
   {
-    title: "Unified Troubleshooting Chat",
+    title: "Unified Troubleshooting",
     description: "Ask questions, review logs, and get answers in one place.",
     icon: "chat",
   },
-  {
-    title: "Action Plan Generator",
-    description: "Convert issues into clear owners, next steps, and team notifications.",
-    icon: "plan",
-  },
-  {
-    title: "Priority Issue Tracker",
-    description: "View active issues ranked by urgency and business impact.",
-    icon: "priority",
-  },
+] as const;
+
+const cloudVendors = [
+  { key: "aws", label: "AWS", enabled: true },
+  { key: "azure", label: "Azure", enabled: false },
+  { key: "gcp", label: "GCP", enabled: false },
 ] as const;
 
 const TRACKED_UTILIZATION_STORAGE_KEY = "analytics_hub_tracked_utilization_resources_v1";
 const DEFAULT_TRACKED_UTILIZATION_COUNT = 4;
 
+const knowMePositioning =
+  "Your AWS operations co-pilot - watching connected accounts, explaining what matters, ranking risks by business impact, and guiding safe, approved fixes.";
+
 const guideHighlights = {
-  whyMe: [
-    "I turn configured AWS accounts into a live operations cockpit with fast JSONL-backed tables.",
-    "I route chat questions through a scored tool catalog before asking the LLM to synthesize.",
-    "I help convert spend, idle-resource, certificate, and utilization signals into practical actions.",
+  why: [
+    {
+      title: "See what needs attention first",
+      body: "I bring cost, certificates, idle resources, ECS health, and utilization signals into one operations view so you do not have to jump across AWS pages.",
+    },
+    {
+      title: "Understand business impact",
+      body: "I rank findings by urgency, cost impact, expiry risk, and resource health so you know what to fix first.",
+    },
+    {
+      title: "Move from data to action",
+      body: "Every important signal can be discussed, explained, and turned into a practical next step.",
+    },
+    {
+      title: "Stay safer while acting",
+      body: "Risky fixes should be reviewed and approved before execution. The assistant should guide actions, not blindly perform them.",
+    },
   ],
   suggestions: [
-    "Start with Accounts, then inspect Financial Impact because that table refreshes first.",
-    "Refresh Detect Idle Resources to pull EC2 and CloudWatch evidence into the JSONL snapshot.",
-    "Open Utilization Insights to pin the ECS services you want monitored on the tile.",
-    "Send any table to chat when you need a grounded explanation or cleanup plan.",
+    {
+      title: "Fix urgent expiry risks",
+      body: "Review certificates that are close to expiry and understand which services may be affected.",
+    },
+    {
+      title: "Reduce cloud waste",
+      body: "Find idle and underused resources that may be safe to stop, resize, or review.",
+    },
+    {
+      title: "Catch performance pressure",
+      body: "Spot overused or underprovisioned resources before they become incidents.",
+    },
+    {
+      title: "Investigate cost drivers",
+      body: "See which services and accounts are driving spend, then discuss the reason with the assistant.",
+    },
+    {
+      title: "Review ECS health",
+      body: "Inspect clusters, services, tasks, and related utilization signals from one place.",
+    },
+  ],
+  identity: [
+    {
+      title: "Operations cockpit",
+      body: "A single place for account health, cost, utilization, certificates, idle resources, and ECS context.",
+    },
+    {
+      title: "Troubleshooting workspace",
+      body: "Upload logs, traces, or RCA notes and continue the investigation in chat.",
+    },
+    {
+      title: "Decision assistant",
+      body: "I help convert AWS signals into impact, evidence, and next steps.",
+    },
+  ],
+  help: [
+    {
+      title: "Connect accounts",
+      body: "The app reads configured AWS accounts and prepares account-aware insights.",
+    },
+    {
+      title: "Collect signals",
+      body: "It gathers cost, certificates, utilization, idle resources, ECS, and account health data.",
+    },
+    {
+      title: "Rank what matters",
+      body: "Findings are grouped and prioritized by risk, business impact, urgency, and savings.",
+    },
+    {
+      title: "Discuss with context",
+      body: "Send any row, table, or finding into chat so the assistant already knows what you are asking about.",
+    },
+    {
+      title: "Act safely",
+      body: "Use recommendations and action plans to review what to do next before applying changes.",
+    },
   ],
 } as const;
 
-const agentFlowHighlights = [
-  {
-    label: "1. Deterministic first",
-    detail: "Entities, triggers, and semantic similarity score the tool catalog before an LLM planner is used.",
-  },
-  {
-    label: "2. JSONL memory",
-    detail: "Chat context, AWS responses, table refreshes, and tool vectors are persisted locally without a database.",
-  },
-  {
-    label: "3. AWS-native pulls",
-    detail: "Tools call Cost Explorer, CloudWatch, EC2, ECS, ACM, Budgets, STS, and tagging APIs directly.",
-  },
-  {
-    label: "4. LLM after grounding",
-    detail: "The LLM explains implications only after AWS data has been fetched, cached, and shaped.",
-  },
-] as const;
-
-const agentBuildDetails = [
-  {
-    title: "Tool catalog",
-    body: "Each tool declares endpoint, trigger language, required inputs, cache policy, response shape, and live-call need.",
-  },
-  {
-    title: "Semantic router",
-    body: "FAISS is used when available; otherwise the same normalized vector score runs locally in Python.",
-  },
-  {
-    title: "Idle resource evidence",
-    body: "EC2 inventory and CloudWatch CPU/network metrics produce idle findings, implications, and actions.",
-  },
-  {
-    title: "Chat-ready tables",
-    body: "Every table can become a focused chat context so follow-ups reuse the latest session dataset.",
-  },
-] as const;
-
-const agentScoreFormula =
-  "Improvement path: final_score = 0.55 * semantic similarity + 0.25 * deterministic trigger score + 0.20 * entity score.";
-
 const guideSteps = [
   {
-    title: "Land on live signals",
-    tag: "Landing",
-    body: "Analytics Hub opens from stored JSON/JSONL data first, then refreshes AWS-backed sections without blocking the first screen.",
-    action: "Review Financial Impact first, then use the tiles to jump into operational signals.",
-  },
-  {
-    title: "Choose accounts",
+    title: "Select accounts",
     tag: "Accounts",
-    body: "Accounts lets you choose from the backend-configured AWS accounts before reviewing cost, utilization, and certificate data.",
-    action: "Open Accounts and select the environments you want included.",
+    body: "Choose the AWS accounts you want to inspect.",
+    action: "Open account management and select the connected accounts for this review.",
   },
   {
-    title: "Find idle waste",
-    tag: "Idle",
-    body: "Detect Idle Resources uses AWS EC2 inventory and CloudWatch metrics to surface stopped, idle, and underused instances with implications.",
-    action: "Refresh the idle table, then click Analyze for an LLM-written cleanup summary.",
+    title: "Refresh key signals",
+    tag: "Signals",
+    body: "Start with Financial Impact, Certificates, Utilization, and Idle Resources.",
+    action: "Refresh the table that matters for your current investigation.",
   },
   {
-    title: "Track utilization",
-    tag: "Analyze",
-    body: "Utilization Insights tracks ECS services, lets you pin monitored resources, and blinks red when a tracked service is overused.",
-    action: "Open the Utilization modal, choose monitored resources, and expand Analysis when you need the summary.",
+    title: "Open Priority Action Queue",
+    tag: "Priority",
+    body: "Review the highest-risk findings first.",
+    action: "Use the queue to compare impact, evidence, and recommended action.",
   },
   {
-    title: "Discuss a table",
+    title: "Discuss a finding",
     tag: "Chat",
-    body: "The discuss button sends the current table into a dedicated chat context so follow-up questions stay grounded in the selected data.",
-    action: "Use the chat icon on any table and ask for root cause, risk, or next steps.",
+    body: "Send any row into chat for explanation, RCA, or cleanup planning.",
+    action: "Use Discuss on certificates, utilization, ECS, financial impact, or idle resources.",
   },
   {
-    title: "Move to action",
-    tag: "Workflow",
-    body: "The chat flow can turn table evidence into owner-ready remediation plans while staying grounded in the selected data.",
-    action: "Send an idle, certificate, financial, or utilization table to chat and ask for the next safe action.",
+    title: "Use Unified Troubleshooting",
+    tag: "Troubleshoot",
+    body: "Paste logs, traces, or RCA notes to start an issue-focused chat.",
+    action: "Start troubleshooting when you have incident context that needs structured analysis.",
   },
 ] as const;
 
@@ -293,6 +341,9 @@ function GuideDock({
   onAccounts,
   onUtilization,
   onPriority,
+  onCertificates,
+  onFinancial,
+  onTroubleshooting,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -300,27 +351,28 @@ function GuideDock({
   onAccounts: () => void;
   onUtilization: () => void;
   onPriority: () => void;
+  onCertificates: () => void;
+  onFinancial: () => void;
+  onTroubleshooting: () => void;
 }) {
-  const [activeTopic, setActiveTopic] = useState<"why" | "suggest" | "iam" | "built">("why");
-  const topicContent = {
-    why: { title: "Why me", body: guideHighlights.whyMe },
-    suggest: { title: "I suggest", body: guideHighlights.suggestions },
-    iam: {
-      title: "I am",
-      body: [
-        "A lightweight cloud operations workspace that blends AWS cost, resource health, guided troubleshooting, and LLM-assisted analysis into one dashboard.",
-      ],
-    },
-    built: {
-      title: "How I am built",
-      body: [
-        ...agentFlowHighlights.map((item) => `${item.label}: ${item.detail}`),
-        `Semantic scoring upgrade: ${agentScoreFormula}`,
-        ...agentBuildDetails.map((item) => `${item.title}: ${item.body}`),
-      ],
-    },
-  } as const;
-  const currentTopic = topicContent[activeTopic];
+  const [activeTopic, setActiveTopic] = useState<"why" | "suggest" | "iam" | "help" | "tour">("why");
+  const tabs = [
+    ["why", "Why use me"],
+    ["suggest", "What I suggest"],
+    ["iam", "What I am"],
+    ["help", "How I help"],
+    ["tour", "Quick tour"],
+  ] as const;
+  const currentCards =
+    activeTopic === "why"
+      ? guideHighlights.why
+      : activeTopic === "suggest"
+        ? guideHighlights.suggestions
+        : activeTopic === "iam"
+          ? guideHighlights.identity
+          : activeTopic === "help"
+            ? guideHighlights.help
+            : guideSteps;
 
   return (
     <aside className="fixed left-3 top-3 z-30 flex max-w-[calc(100vw-1.5rem)] items-start gap-3 sm:left-5 sm:top-5">
@@ -331,18 +383,24 @@ function GuideDock({
         aria-expanded={open}
       >
         <GuideIcon />
-        <span>Your Guide</span>
+        <span>Know Me</span>
       </button>
 
       {open ? (
-        <div className="guide-slide-in flex max-w-[calc(100vw-6.5rem)] flex-col gap-2 rounded-[26px] border border-white/65 bg-[linear-gradient(135deg,rgba(245,251,255,0.98),rgba(218,235,255,0.94))] p-3 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.24)] backdrop-blur-[24px] sm:max-w-[46rem]">
+        <div className="guide-slide-in flex max-h-[calc(100vh-2rem)] max-w-[calc(100vw-6.5rem)] flex-col gap-3 overflow-y-auto rounded-[26px] border border-white/65 bg-[linear-gradient(135deg,rgba(245,251,255,0.98),rgba(218,235,255,0.94))] p-3 text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.24)] backdrop-blur-[24px] sm:max-w-[48rem]">
+          <div className="flex items-start justify-between gap-3 rounded-[22px] border border-white/65 bg-white/54 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]">
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-700">Know Me</div>
+              <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-slate-900">{knowMePositioning}</p>
+              <p className="mt-1 text-xs leading-5 text-slate-600">One place to watch AWS risks, understand impact, and act safely.</p>
+            </div>
+            <button type="button" onClick={onToggle} className={glassButtonClass} aria-label="Close Know Me guide" title="Close">
+              <CloseIcon />
+            </button>
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
-            {([
-              ["why", "Why me"],
-              ["suggest", "I suggest"],
-              ["iam", "I am"],
-              ["built", "How I am built"],
-            ] as const).map(([key, label]) => (
+            {tabs.map(([key, label]) => (
               <button
                 key={key}
                 type="button"
@@ -350,7 +408,7 @@ function GuideDock({
                 onFocus={() => setActiveTopic(key)}
                 onClick={() => setActiveTopic(key)}
                 className={classNames(
-                  "rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] transition",
+                  "rounded-full border px-3.5 py-2 text-xs font-semibold transition sm:px-4",
                   activeTopic === key
                     ? "border-sky-300/70 bg-sky-600 text-white shadow-[0_12px_26px_rgba(2,132,199,0.18)]"
                     : "border-white/70 bg-white/62 text-slate-700 hover:bg-white",
@@ -359,39 +417,62 @@ function GuideDock({
                 {label}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={onStartTour}
-              className="rounded-full border border-sky-300/70 bg-white/82 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-sky-800 transition hover:bg-white"
-            >
-              Tour
-            </button>
-            <button type="button" onClick={onToggle} className={glassButtonClass} aria-label="Close guide" title="Close">
-              <CloseIcon />
-            </button>
           </div>
 
           <div className="guide-popover guide-shine relative overflow-hidden rounded-[24px] border border-white/65 bg-[linear-gradient(135deg,rgba(2,132,199,0.96),rgba(15,23,42,0.92))] p-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.24)]">
             <div className="relative">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-100">{currentTopic.title}</div>
-              <ul className="mt-3 grid gap-2 text-xs leading-5 text-sky-50/90 sm:grid-cols-2">
-                {currentTopic.body.map((item) => (
-                  <li key={item} className="rounded-2xl border border-white/16 bg-white/10 px-3 py-2">
-                    {item}
-                  </li>
+              {activeTopic === "iam" ? (
+                <p className="rounded-2xl border border-white/16 bg-white/10 px-3 py-2 text-sm leading-6 text-sky-50/95">
+                  I am your AWS operations co-pilot. I watch connected AWS accounts, organize operational signals,
+                  explain what matters, and help you move from findings to safer actions.
+                </p>
+              ) : null}
+              <div className={classNames("grid gap-2 text-xs leading-5 text-sky-50/90", activeTopic === "tour" ? "mt-0" : "mt-3", "sm:grid-cols-2")}>
+                {currentCards.map((item, index) => (
+                  <div key={item.title} className="rounded-2xl border border-white/16 bg-white/10 px-3 py-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                      {activeTopic === "tour" ? <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white text-xs font-bold text-sky-800">{index + 1}</span> : null}
+                      <span>{item.title}</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-sky-50/86">{item.body}</p>
+                  </div>
                 ))}
-              </ul>
+              </div>
               {activeTopic === "suggest" ? (
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" onClick={onUtilization} className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-sky-800">
-                    Analyze utilization
+                  <button type="button" onClick={onPriority} className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-sky-800">
+                    View priority queue
+                  </button>
+                  <button type="button" onClick={onUtilization} className="rounded-full bg-white/16 px-3 py-1.5 text-xs font-semibold text-white">
+                    Check utilization
+                  </button>
+                  <button type="button" onClick={onCertificates} className="rounded-full bg-white/16 px-3 py-1.5 text-xs font-semibold text-white">
+                    Review certificates
+                  </button>
+                  <button type="button" onClick={onFinancial} className="rounded-full bg-white/16 px-3 py-1.5 text-xs font-semibold text-white">
+                    Open financial impact
+                  </button>
+                </div>
+              ) : null}
+              {activeTopic === "tour" ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={onAccounts} className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-sky-800">
+                    Manage accounts
                   </button>
                   <button type="button" onClick={onPriority} className="rounded-full bg-white/16 px-3 py-1.5 text-xs font-semibold text-white">
-                    Priority issues
+                    Open priority queue
                   </button>
-                  <button type="button" onClick={onAccounts} className="rounded-full bg-white/16 px-3 py-1.5 text-xs font-semibold text-white">
-                    Accounts
+                  <button type="button" onClick={onTroubleshooting} className="rounded-full bg-white/16 px-3 py-1.5 text-xs font-semibold text-white">
+                    Start troubleshooting
                   </button>
+                  <button type="button" onClick={onStartTour} className="rounded-full bg-white/16 px-3 py-1.5 text-xs font-semibold text-white">
+                    Open guided walkthrough
+                  </button>
+                </div>
+              ) : null}
+              {activeTopic === "help" ? (
+                <div className="mt-3 rounded-2xl border border-white/16 bg-white/10 px-3 py-2 text-xs leading-5 text-sky-50/84">
+                  Local storage is embedded with the app. No external database server is required.
                 </div>
               ) : null}
             </div>
@@ -410,7 +491,7 @@ function GuideTourModal({
   onIdle,
   onUtilization,
   onPriority,
-  onActionPlan,
+  onTroubleshooting,
 }: {
   stepIndex: number;
   onStepIndexChange: (index: number) => void;
@@ -419,7 +500,7 @@ function GuideTourModal({
   onIdle: () => void;
   onUtilization: () => void;
   onPriority: () => void;
-  onActionPlan: () => void;
+  onTroubleshooting: () => void;
 }) {
   const currentStep = guideSteps[stepIndex];
   const progress = Math.round(((stepIndex + 1) / guideSteps.length) * 100);
@@ -430,10 +511,10 @@ function GuideTourModal({
 
   function runStepAction() {
     if (currentStep.tag === "Accounts") onAccounts();
-    else if (currentStep.tag === "Analyze") onUtilization();
-    else if (currentStep.tag === "Idle") onIdle();
-    else if (currentStep.tag === "Workflow") onPriority();
-    else if (currentStep.tag === "Chat") onActionPlan();
+    else if (currentStep.tag === "Signals") onUtilization();
+    else if (currentStep.tag === "Priority") onPriority();
+    else if (currentStep.tag === "Troubleshoot") onTroubleshooting();
+    else if (currentStep.tag === "Chat") onIdle();
   }
 
   return (
@@ -451,12 +532,12 @@ function GuideTourModal({
             <div className="relative">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/12 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] sm:text-xs">
                 <GuideIcon />
-                Guided tour
+                Quick tour
               </div>
-              <h2 className="mt-4 text-2xl font-semibold leading-tight tracking-tight sm:mt-5 sm:text-3xl">Navigate from signal to action</h2>
+              <h2 className="mt-4 text-2xl font-semibold leading-tight tracking-tight sm:mt-5 sm:text-3xl">Start from what matters</h2>
               <p className="mt-3 text-xs leading-6 text-sky-50/88 sm:mt-4 sm:text-sm sm:leading-7">
-                Follow the animated path: choose accounts, inspect live signals, ask grounded questions, then turn
-                findings into an action plan.
+                Choose accounts, review priority issues, discuss findings with context, and use troubleshooting when
+                logs or RCA notes need a focused workspace.
               </p>
             </div>
             <div className="relative mt-5 grid grid-cols-3 gap-1.5 sm:mt-8 sm:grid-cols-6 sm:gap-2">
@@ -510,9 +591,9 @@ function GuideTourModal({
               <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Showcase actions</div>
               <ul className="mt-3 grid gap-2 text-xs leading-5 text-slate-700 sm:text-sm sm:leading-6 xl:grid-cols-2">
                 {guideHighlights.suggestions.map((suggestion) => (
-                  <li key={suggestion} className="flex gap-2">
+                  <li key={suggestion.title} className="flex gap-2">
                     <CheckIcon />
-                    <span>{suggestion}</span>
+                    <span>{suggestion.title}</span>
                   </li>
                 ))}
               </ul>
@@ -557,11 +638,11 @@ function FeatureTab({
     <button
       type="button"
       onClick={onClick}
-      className="group flex min-h-[9.5rem] flex-col items-start justify-between rounded-[26px] border border-white/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.5),rgba(219,234,254,0.24))] px-5 py-5 text-left text-slate-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.86),0_18px_42px_rgba(30,64,175,0.08)] transition hover:-translate-y-1 hover:border-white/80 hover:bg-white/60 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_24px_54px_rgba(30,64,175,0.12)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+      className="group flex min-h-[8.75rem] flex-col items-start justify-between rounded-[18px] border border-white/65 bg-white/54 px-4 py-4 text-left text-slate-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.86),0_12px_32px_rgba(30,64,175,0.07)] transition hover:-translate-y-0.5 hover:border-white/90 hover:bg-white/72 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_18px_42px_rgba(30,64,175,0.11)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
       aria-label={`${title}: ${description}`}
     >
       <span className="flex w-full items-start justify-between gap-4">
-        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/60 bg-sky-100/72 text-sky-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-white/70 bg-sky-50 text-sky-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
           <FeatureIcon type={icon} />
         </span>
         <span
@@ -574,7 +655,7 @@ function FeatureTab({
           aria-hidden="true"
         />
       </span>
-      <span className="mt-5 block">
+      <span className="mt-4 block">
         <span className="block text-base font-semibold leading-6 text-slate-900 group-hover:text-sky-800">
           {title}
         </span>
@@ -582,6 +663,80 @@ function FeatureTab({
         {children ? <span className="mt-4 block w-full">{children}</span> : null}
       </span>
     </button>
+  );
+}
+
+function SummaryMetric({
+  label,
+  value,
+  helper,
+  tone = "sky",
+}: {
+  label: string;
+  value: string;
+  helper: string;
+  tone?: "sky" | "emerald" | "amber" | "rose" | "slate";
+}) {
+  const toneClass = {
+    sky: "border-sky-100 bg-sky-50/78 text-sky-900",
+    emerald: "border-emerald-100 bg-emerald-50/78 text-emerald-900",
+    amber: "border-amber-100 bg-amber-50/82 text-amber-950",
+    rose: "border-rose-100 bg-rose-50/80 text-rose-950",
+    slate: "border-slate-200 bg-white/62 text-slate-900",
+  }[tone];
+
+  return (
+    <div className={classNames("rounded-[18px] border px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)]", toneClass)}>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-70">{label}</div>
+      <div className="mt-2 text-2xl font-semibold leading-none tracking-tight">{value}</div>
+      <div className="mt-2 text-xs leading-5 opacity-75">{helper}</div>
+    </div>
+  );
+}
+
+function RefreshStatusStrip({
+  refreshInProgress,
+  refreshingTableKey,
+  updatedLabel,
+  accountCount,
+  selectedAccountCount,
+  storageStatus,
+}: {
+  refreshInProgress: boolean;
+  refreshingTableKey: string | null;
+  updatedLabel: string;
+  accountCount: number;
+  selectedAccountCount: number;
+  storageStatus: AnalyticsHubStorageStatus | null;
+}) {
+  const dbReady = Boolean(storageStatus?.sqlite_enabled && storageStatus.db_exists && storageStatus.db_connected !== false);
+  const activeStorageLabel = storageStatus?.active_storage_source === "sqlite" ? "SQLite primary" : "JSONL fallback";
+  const accountRows = storageStatus?.table_counts.aws_accounts ?? 0;
+  const findingRows =
+    (storageStatus?.table_counts.priority_findings ?? 0) +
+    (storageStatus?.table_counts.utilization_findings ?? 0) +
+    (storageStatus?.table_counts.certificates ?? 0) +
+    (storageStatus?.table_counts.idle_resources ?? 0);
+  return (
+    <details className="group relative">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-2 text-xs font-semibold text-slate-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)] transition hover:bg-white">
+        <StatusPulseIcon active={refreshInProgress} />
+        <span>Status</span>
+        <span className={classNames("h-1.5 w-1.5 rounded-full", dbReady ? "bg-emerald-500" : "bg-amber-500")} aria-hidden="true" />
+      </summary>
+      <div className="absolute left-0 top-full z-20 mt-2 w-80 rounded-[18px] border border-white/70 bg-white/95 p-3 text-xs leading-5 text-slate-700 shadow-[0_18px_44px_rgba(15,23,42,0.16)] backdrop-blur-md">
+        <div className="font-semibold text-slate-950">
+          {refreshInProgress ? `Refreshing ${refreshingTableKey ?? "data"}` : "Cache ready"}
+        </div>
+        <div className="mt-1">{updatedLabel}</div>
+        <div className="mt-1">{selectedAccountCount} selected of {accountCount} connected</div>
+        <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/80 px-3 py-2 text-emerald-900">
+          <div className="font-semibold">{dbReady ? "Embedded DB connected" : "Embedded DB fallback active"}</div>
+          <div className="mt-1">{activeStorageLabel} / {accountRows} account row{accountRows === 1 ? "" : "s"} / {findingRows} signal row{findingRows === 1 ? "" : "s"}</div>
+          <div className="mt-1 text-emerald-800/80">No DB server or DB restart needed. Copy `backend/data` with the code.</div>
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -607,13 +762,13 @@ function DataCard({
   children?: ReactNode;
 }) {
   return (
-    <div className={classNames(glassPanelClass, "p-6 text-slate-900")}>
+    <div className={classNames(glassPanelClass, "p-5 text-slate-900 sm:p-6")}>
       <div className="absolute inset-x-6 top-0 h-px bg-white/70" aria-hidden="true" />
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 border-b border-white/45 pb-4">
         <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.34em] text-slate-500">{title}</div>
-          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-600">
-            <span>{updatedLabel}</span>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-slate-500">{title}</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span className="rounded-full border border-white/60 bg-white/48 px-2.5 py-1">{updatedLabel}</span>
             <button type="button" onClick={onRefresh} className={glassButtonClass} aria-label={`Refresh ${title}`} title="Refresh">
               <RefreshIcon />
             </button>
@@ -624,7 +779,7 @@ function DataCard({
         <button
           type="button"
           onClick={onDiscuss}
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.72),rgba(231,239,255,0.44))] text-slate-700 shadow-[0_16px_30px_rgba(148,163,184,0.12)] transition hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(231,239,255,0.54))] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/60 bg-white/70 text-slate-700 shadow-[0_12px_26px_rgba(148,163,184,0.12)] transition hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
           aria-label={`Discuss ${title}`}
           title="Discuss"
         >
@@ -633,45 +788,61 @@ function DataCard({
       </div>
 
       {children ?? (
-        <div className="mt-5 overflow-x-auto rounded-[28px] border border-white/55 bg-white/36 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
-          <table className="min-w-full border-collapse text-sm text-slate-800">
-            <thead>
-              <tr className="border-b border-slate-300/35 text-left text-[11px] uppercase tracking-[0.22em] text-slate-500">
-                {headers.map((header) => (
-                  <th key={header} className="px-4 py-4 font-semibold">
-                    {header}
-                  </th>
+        <DataTable title={title} headers={headers} rows={rows} emptyText={emptyText} />
+      )}
+    </div>
+  );
+}
+
+function DataTable({
+  title,
+  headers,
+  rows,
+  emptyText,
+}: {
+  title: string;
+  headers: string[];
+  rows: ReactNode[][];
+  emptyText: string;
+}) {
+  return (
+    <div className="mt-5 overflow-x-auto rounded-[18px] border border-white/60 bg-white/48 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+      <table className="min-w-full border-collapse text-sm text-slate-800">
+        <thead>
+          <tr className="border-b border-slate-300/35 bg-white/38 text-left text-[11px] uppercase tracking-[0.18em] text-slate-500">
+            {headers.map((header) => (
+              <th key={header} className="px-4 py-4 font-semibold">
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length > 0 ? (
+            rows.map((row, rowIndex) => (
+              <tr
+                key={`${title}-${rowIndex}`}
+                className="border-b border-slate-200/45 transition hover:bg-sky-50/46 last:border-b-0"
+              >
+                {row.map((cell, cellIndex) => (
+                  <td
+                    key={`${title}-${rowIndex}-${cellIndex}`}
+                    className="px-4 py-4 align-top text-[14px] leading-6 text-slate-800"
+                  >
+                    {cell}
+                  </td>
                 ))}
               </tr>
-            </thead>
-            <tbody>
-              {rows.length > 0 ? (
-                rows.map((row, rowIndex) => (
-                  <tr
-                    key={`${title}-${rowIndex}`}
-                    className="border-b border-slate-200/45 transition hover:bg-white/18 last:border-b-0"
-                  >
-                    {row.map((cell, cellIndex) => (
-                      <td
-                        key={`${title}-${rowIndex}-${cellIndex}`}
-                        className="px-4 py-4 align-top text-[14px] leading-6 text-slate-800"
-                      >
-                        {cell}
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={headers.length} className="px-4 py-7 text-slate-500">
-                    {emptyText}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+            ))
+          ) : (
+            <tr>
+              <td colSpan={headers.length} className="px-4 py-7 text-slate-500">
+                {emptyText}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -728,31 +899,12 @@ function FinancialImpactBarChart({
   );
 }
 
-function ActionBadge() {
-  return (
-    <button
-      type="button"
-      className="ml-3 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-red-700 shadow-[0_8px_18px_rgba(239,68,68,0.12)] transition hover:bg-red-100"
-    >
-      Action
-    </button>
-  );
-}
-
-function DaysLeftCell({ days }: { days: number }) {
-  const isUrgent = days < 30;
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className={classNames("font-semibold", isUrgent ? "text-red-600" : "text-slate-800")}>{days}</span>
-      {isUrgent ? <ActionBadge /> : null}
-    </div>
-  );
-}
-
 function FinancialImpactCard({
   rows,
   items,
   total,
+  topAccountLabel,
+  possibleSaving,
   accountKeys,
   selectedAccountKeys,
   updatedLabel,
@@ -761,10 +913,15 @@ function FinancialImpactCard({
   onToggleAccount,
   onRefresh,
   onDiscuss,
+  onExplainSpend,
+  onFindWaste,
+  onShowHighestCost,
 }: {
   rows: ReactNode[][];
   items: Array<{ service: string; cost: number; share: string }>;
   total: number;
+  topAccountLabel: string;
+  possibleSaving: number;
   accountKeys: string[];
   selectedAccountKeys: string[];
   updatedLabel: string;
@@ -773,6 +930,9 @@ function FinancialImpactCard({
   onToggleAccount: (accountKey: string) => void;
   onRefresh: () => void;
   onDiscuss: () => void;
+  onExplainSpend: () => void;
+  onFindWaste: () => void;
+  onShowHighestCost: () => void;
 }) {
   const controls = (
     <div className="inline-flex rounded-full border border-white/55 bg-white/42 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.68)]">
@@ -803,10 +963,12 @@ function FinancialImpactCard({
     </div>
   );
   const selectedSet = new Set(selectedAccountKeys);
+  const topService = items[0];
+  const concentrationWarning = topService && Number(topService.share) >= 45;
 
   return (
     <DataCard
-      title="Financial Impact Table"
+      title="Financial Impact / Cost Driver Assistant"
       headers={["Service", "Current Spend ($)", "Share of Selected Spend"]}
       rows={view === "table" ? rows : []}
       emptyText="No stored service spend rows are available for the selected accounts yet."
@@ -815,6 +977,30 @@ function FinancialImpactCard({
       onDiscuss={onDiscuss}
       controls={controls}
     >
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <SummaryMetric label="30d spend" value={formatCurrency(total)} helper="Selected accounts" tone="sky" />
+        <SummaryMetric label="Top service" value={topService?.service ?? "None"} helper={topService ? formatCurrency(topService.cost) : "No spend rows"} tone="amber" />
+        <SummaryMetric label="Top account" value={topAccountLabel} helper="Highest selected spend" tone="emerald" />
+        <SummaryMetric label="Possible saving" value={formatCurrency(possibleSaving)} helper="Idle resource estimate" tone={possibleSaving > 0 ? "emerald" : "slate"} />
+        <SummaryMetric label="Concentration" value={concentrationWarning ? "Watch" : "Normal"} helper={topService ? `${topService.share}% in top service` : "No spend"} tone={concentrationWarning ? "rose" : "slate"} />
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2 rounded-[20px] border border-white/55 bg-white/34 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.68)]">
+        {[
+          ["Explain spend drivers", onExplainSpend],
+          ["Find waste", onFindWaste],
+          ["Show highest-cost services", onShowHighestCost],
+          ["Discuss financial impact", onDiscuss],
+        ].map(([label, handler]) => (
+          <button
+            key={label as string}
+            type="button"
+            onClick={handler as () => void}
+            className="rounded-full border border-white/70 bg-white/68 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white"
+          >
+            {label as string}
+          </button>
+        ))}
+      </div>
       <div className="mt-5 rounded-[24px] border border-white/55 bg-white/34 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.68)]">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -848,7 +1034,16 @@ function FinancialImpactCard({
           </div>
         </div>
       </div>
-      {view === "bar" ? <FinancialImpactBarChart items={items} total={total} /> : null}
+      {view === "table" ? (
+        <DataTable
+          title="Financial Impact Table"
+          headers={["Service", "Current Spend ($)", "Share of Selected Spend"]}
+          rows={rows}
+          emptyText="No stored service spend rows are available for the selected accounts yet."
+        />
+      ) : (
+        <FinancialImpactBarChart items={items} total={total} />
+      )}
     </DataCard>
   );
 }
@@ -868,9 +1063,11 @@ function formatTroubleshootingPrompt(issueText: string, files: Array<{ name: str
     : "No file context was uploaded.";
 
   return [
-    "Use the RCA, log file, and issue trace context below to analyze the probable issue.",
-    "Describe the most likely root cause, the evidence that supports it, and the immediate next troubleshooting steps.",
-    "Do not call external tools yet; reason from the supplied context.",
+    "I need troubleshooting help for an AWS issue. Analyze probable root cause, affected AWS services/resources, missing evidence, immediate mitigation, permanent fix, and AWS tools/data needed next.",
+    "Use the supplied issue text and uploaded context as the initial evidence. Do not invent factual AWS state that is not in the context.",
+    "",
+    "source=analytics_hub",
+    "context_type=unified_troubleshooting",
     "",
     "Issue log/trace text:",
     issueText.trim() || "No issue log/trace text was entered.",
@@ -1132,27 +1329,33 @@ function EcsClusterTree({
                   })
           }
         />
-        <div className="h-6 w-px bg-slate-300/70" aria-hidden="true" />
+        <div className="ecs-connector-line h-7 w-px" aria-hidden="true" />
         {services.length > 0 ? (
-          <div className="grid w-full gap-4 md:grid-cols-2">
+          <div className="relative w-full">
+            <div className="ecs-connector-line absolute left-[12%] right-[12%] top-0 hidden h-px md:block" aria-hidden="true" />
+            <div className="grid w-full gap-4 pt-4 md:grid-cols-2">
             {services.map((service) => (
-              <div key={service.service_arn} className="flex min-w-0 flex-col items-center">
+              <div key={service.service_arn} className="relative flex min-w-0 flex-col items-center">
+                <div className="ecs-connector-line absolute -top-4 left-1/2 hidden h-4 w-px md:block" aria-hidden="true" />
                 <EcsNode
                   label={service.service_name}
                   severity={service.severity}
                   insight={service.insight}
                   onClick={service.severity === "ok" ? undefined : () => onNodeDetail(serviceDetail(service))}
                 />
-                <div className="h-5 w-px bg-slate-300/70" aria-hidden="true" />
-                <div className="grid w-full gap-2">
+                <div className="ecs-connector-line h-5 w-px" aria-hidden="true" />
+                <div className="relative grid w-full gap-2 pl-5">
+                  {service.tasks.length > 0 ? <div className="ecs-connector-line absolute bottom-4 left-2 top-0 w-px" aria-hidden="true" /> : null}
                   {(service.tasks.length > 0 ? service.tasks : []).slice(0, 8).map((task) => (
-                    <EcsNode
-                      key={task.task_arn}
-                      label={task.task_id.slice(0, 12)}
-                      severity={task.severity}
-                      insight={task.stopped_reason || `${task.last_status} / ${task.health_status ?? "health unknown"}`}
-                      onClick={task.severity === "ok" ? undefined : () => onNodeDetail(taskDetail(task))}
-                    />
+                    <div key={task.task_arn} className="relative flex justify-center">
+                      <div className="ecs-connector-line absolute left-[-0.75rem] top-1/2 h-px w-4" aria-hidden="true" />
+                      <EcsNode
+                        label={task.task_id.slice(0, 12)}
+                        severity={task.severity}
+                        insight={task.stopped_reason || `${task.last_status} / ${task.health_status ?? "health unknown"}`}
+                        onClick={task.severity === "ok" ? undefined : () => onNodeDetail(taskDetail(task))}
+                      />
+                    </div>
                   ))}
                   {service.tasks.length === 0 ? (
                     <div className="rounded-full border border-yellow-200 bg-yellow-50 px-3 py-2 text-center text-xs font-semibold text-yellow-800">
@@ -1162,6 +1365,7 @@ function EcsClusterTree({
                 </div>
               </div>
             ))}
+            </div>
           </div>
         ) : (
           <div className="rounded-full border border-white/60 bg-white/48 px-4 py-2 text-xs font-semibold text-slate-600">
@@ -1213,23 +1417,40 @@ function EcsInsightTree({
 function EcsInsightCard({
   accounts,
   filter,
+  utilizationIssues,
   onFilterChange,
   onExpand,
   onNodeDetail,
+  onDiscuss,
+  onFindIssues,
+  onExplain,
+  onRefresh,
 }: {
   accounts: AnalyticsHubAccountSnapshot[];
   filter: string;
+  utilizationIssues: number;
   onFilterChange: (value: string) => void;
   onExpand: () => void;
   onNodeDetail: (detail: EcsNodeDetail) => void;
+  onDiscuss: () => void;
+  onFindIssues: () => void;
+  onExplain: () => void;
+  onRefresh: () => void;
 }) {
+  const clusters = accounts.flatMap((account) => account.ecs_clusters ?? []);
+  const services = clusters.flatMap((cluster) => cluster.services);
+  const tasks = services.flatMap((service) => service.tasks);
+  const warningCount =
+    clusters.filter((cluster) => cluster.severity !== "ok").length +
+    services.filter((service) => service.severity !== "ok" || service.events.length > 0).length +
+    tasks.filter((task) => task.severity !== "ok").length;
   return (
     <div className={classNames(glassPanelClass, "p-6 text-slate-900")}>
       <div className="absolute inset-x-6 top-0 h-px bg-white/70" aria-hidden="true" />
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="text-[11px] uppercase tracking-[0.34em] text-slate-500">ECS Insight</div>
-          <div className="mt-3 text-xs text-slate-600">Monitoring test-app-ecs-cluster and dev-app-ecs-cluster</div>
+          <div className="mt-3 text-xs text-slate-600">Clusters, services, tasks, events, and linked utilization signals.</div>
         </div>
         <button
           type="button"
@@ -1241,6 +1462,26 @@ function EcsInsightCard({
           <ExpandIcon />
         </button>
       </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-4">
+        <SummaryMetric label="Clusters" value={String(clusters.length)} helper="Selected accounts" tone="sky" />
+        <SummaryMetric label="Services" value={String(services.length)} helper="ECS services" tone="emerald" />
+        <SummaryMetric label="Tasks" value={String(tasks.length)} helper="Known tasks" tone="slate" />
+        <SummaryMetric label="Warnings" value={String(warningCount + utilizationIssues)} helper="Events and utilization" tone={warningCount + utilizationIssues > 0 ? "amber" : "slate"} />
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2 rounded-[18px] border border-white/55 bg-white/34 p-3">
+        <button type="button" onClick={onDiscuss} className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-100">
+          Discuss ECS context
+        </button>
+        <button type="button" onClick={onFindIssues} className="rounded-full border border-white/70 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white">
+          Find service issues
+        </button>
+        <button type="button" onClick={onExplain} className="rounded-full border border-white/70 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white">
+          Explain ECS structure
+        </button>
+        <button type="button" onClick={onRefresh} className="rounded-full border border-white/70 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white">
+          Refresh ECS
+        </button>
+      </div>
       <label className="mt-4 block">
         <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Service filter</span>
         <input
@@ -1250,7 +1491,13 @@ function EcsInsightCard({
           placeholder="Filter service name"
         />
       </label>
-      <EcsInsightTree accounts={accounts} filter={filter} onNodeDetail={onNodeDetail} />
+      {clusters.length > 0 ? (
+        <EcsInsightTree accounts={accounts} filter={filter} onNodeDetail={onNodeDetail} />
+      ) : (
+        <div className="mt-5 rounded-[20px] border border-white/60 bg-white/46 p-5 text-sm leading-6 text-slate-600">
+          No ECS resources loaded for the selected accounts.
+        </div>
+      )}
     </div>
   );
 }
@@ -1331,22 +1578,6 @@ function EcsNodeDetailModal({ detail, onClose }: { detail: EcsNodeDetail; onClos
   );
 }
 
-function NoteCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className={classNames(glassPanelClass, "p-6 text-slate-900")}>
-      <div className="absolute inset-x-6 top-0 h-px bg-white/70" aria-hidden="true" />
-      <div className="text-[11px] uppercase tracking-[0.34em] text-slate-500">{title}</div>
-      <div className="mt-5 space-y-4 text-sm leading-7 text-slate-600">{children}</div>
-    </div>
-  );
-}
-
 function aggregateServiceSpend(accounts: AnalyticsHubAccountSnapshot[]) {
   const totals = new Map<string, number>();
   let overall = 0;
@@ -1376,9 +1607,12 @@ function flattenCertificates(accounts: AnalyticsHubAccountSnapshot[]) {
 }
 
 type UtilizationInsightRow = {
+  accountKey: string;
   account: string;
+  region: string;
   cluster: string;
   service: string;
+  resourceId: string;
   resourceType: string;
   source: string;
   desired: number;
@@ -1391,12 +1625,17 @@ type UtilizationInsightRow = {
   severity: "ok" | "warning" | "critical";
   recommendation: string;
   evidence: string;
+  evidenceItems: string[];
   reason: string;
   solution: string;
+  currentConfiguration: Record<string, unknown> | null;
+  recommendedConfiguration: Record<string, unknown> | null;
   consoleUrl: string | null;
+  raw: unknown;
 };
 
 type IdleResourceRow = {
+  accountKey: string;
   account: string;
   resourceType: string;
   resourceId: string;
@@ -1410,7 +1649,9 @@ type IdleResourceRow = {
   idle: boolean;
   cpuAveragePct: number | null;
   networkAverageBytes: number | null;
+  estimatedMonthlyWaste: number | null;
   consoleUrl: string | null;
+  raw: unknown;
 };
 
 function flattenIdleResources(accounts: AnalyticsHubAccountSnapshot[]) {
@@ -1418,6 +1659,7 @@ function flattenIdleResources(accounts: AnalyticsHubAccountSnapshot[]) {
   for (const account of accounts) {
     for (const item of account.idle_resources ?? []) {
       rows.push({
+        accountKey: account.account_key,
         account: formatAccountLabel(account.account_key),
         resourceType: item.resource_type,
         resourceId: item.resource_id,
@@ -1431,7 +1673,9 @@ function flattenIdleResources(accounts: AnalyticsHubAccountSnapshot[]) {
         idle: item.idle,
         cpuAveragePct: item.cpu_average_percent ?? null,
         networkAverageBytes: item.network_average_bytes ?? null,
+        estimatedMonthlyWaste: item.estimated_monthly_waste ?? null,
         consoleUrl: item.console_url ?? null,
+        raw: item,
       });
     }
   }
@@ -1474,10 +1718,19 @@ function flattenUtilizationInsights(accounts: AnalyticsHubAccountSnapshot[]) {
   for (const account of accounts) {
     for (const resource of account.utilization_resources ?? []) {
       const metricsText = formatUtilizationMetrics(resource.metrics);
+      const evidenceItems = [
+        `${resource.resource_type} ${resource.finding}`,
+        resource.reason,
+        metricsText ? `metrics=${metricsText}` : "",
+        resource.recommended_configuration ? `recommendation=${JSON.stringify(resource.recommended_configuration)}` : "",
+      ].filter(Boolean);
       rows.push({
+        accountKey: account.account_key,
         account: formatAccountLabel(account.account_key),
+        region: resource.region,
         cluster: resource.source,
         service: utilizationResourceDisplayName(resource),
+        resourceId: resource.resource_id,
         resourceType: resource.resource_type,
         source: resource.source,
         desired: 0,
@@ -1496,15 +1749,12 @@ function flattenUtilizationInsights(accounts: AnalyticsHubAccountSnapshot[]) {
         recommendation: resource.suggested_action,
         reason: resource.reason,
         solution: resource.suggested_action,
+        currentConfiguration: resource.current_configuration,
+        recommendedConfiguration: resource.recommended_configuration ?? null,
         consoleUrl: resource.console_url ?? null,
-        evidence: [
-          `${resource.resource_type} ${resource.finding}`,
-          resource.reason,
-          metricsText ? `metrics=${metricsText}` : "",
-          resource.recommended_configuration ? `recommendation=${JSON.stringify(resource.recommended_configuration)}` : "",
-        ]
-          .filter(Boolean)
-          .join("; "),
+        evidence: evidenceItems.join("; "),
+        evidenceItems,
+        raw: resource,
       });
     }
     for (const cluster of account.ecs_clusters ?? []) {
@@ -1512,10 +1762,21 @@ function flattenUtilizationInsights(accounts: AnalyticsHubAccountSnapshot[]) {
         const utilizationPct = Math.round(service.utilization_percent ?? (service.desired_count > 0 ? (service.running_count / service.desired_count) * 100 : 0));
         const failedTaskCount = service.tasks.filter((task) => task.severity !== "ok").length;
         const utilizationStatus = service.utilization_status ?? (utilizationPct >= 85 ? "overused" : utilizationPct <= 30 ? "underused" : "balanced");
+        const evidenceItems = [
+          service.insight,
+          service.reason ? `reason=${service.reason}` : "",
+          service.cpu_average_percent != null ? `cpu=${service.cpu_average_percent}%` : "",
+          service.memory_average_percent != null ? `memory=${service.memory_average_percent}%` : "",
+          service.deployment_status ? `deployment=${service.deployment_status}` : "",
+          failedTaskCount > 0 ? `${failedTaskCount} task issue(s)` : "",
+        ].filter(Boolean);
         rows.push({
+          accountKey: account.account_key,
           account: formatAccountLabel(account.account_key),
+          region: account.region,
           cluster: cluster.cluster_name,
           service: service.service_name,
+          resourceId: service.service_arn,
           resourceType: "ECS service",
           source: "AWS ECS and CloudWatch",
           desired: service.desired_count,
@@ -1529,17 +1790,17 @@ function flattenUtilizationInsights(accounts: AnalyticsHubAccountSnapshot[]) {
           recommendation: utilizationRecommendation(service),
           reason: service.reason || service.insight,
           solution: service.solution || utilizationRecommendation(service),
+          currentConfiguration: {
+            desired_count: service.desired_count,
+            running_count: service.running_count,
+            pending_count: service.pending_count,
+            task_definition: service.task_definition ?? null,
+          },
+          recommendedConfiguration: null,
           consoleUrl: service.console_url ?? null,
-          evidence: [
-            service.insight,
-            service.reason ? `reason=${service.reason}` : "",
-            service.cpu_average_percent != null ? `cpu=${service.cpu_average_percent}%` : "",
-            service.memory_average_percent != null ? `memory=${service.memory_average_percent}%` : "",
-            service.deployment_status ? `deployment=${service.deployment_status}` : "",
-            failedTaskCount > 0 ? `${failedTaskCount} task issue(s)` : "",
-          ]
-            .filter(Boolean)
-            .join("; "),
+          evidence: evidenceItems.join("; "),
+          evidenceItems,
+          raw: service,
         });
       }
     }
@@ -1597,46 +1858,451 @@ function buildUtilizationLlmContext(rows: UtilizationInsightRow[]) {
   );
 }
 
-function idleFallbackAnalysis(rows: IdleResourceRow[]) {
-  if (rows.length === 0) {
-    return "No idle or underused resources are available yet. Refresh idle resources after AWS credentials and EC2/CloudWatch access are configured.";
-  }
-  const critical = rows.filter((row) => row.severity === "critical");
-  const warning = rows.filter((row) => row.severity === "warning");
-  const firstItems = rows.slice(0, 3).map((row) => `${row.account}/${row.resourceId}`).join(", ");
-  if (critical.length > 0) {
-    return `${critical.length} critical idle resource candidate(s) need review. Start with ${firstItems}; validate ownership, then stop, schedule, rightsize, or terminate as appropriate.`;
-  }
-  if (warning.length > 0) {
-    return `${warning.length} underused or stopped resource candidate(s) were found. Review implications before cleanup, especially attached storage and scheduled workloads.`;
-  }
-  return "No high-risk idle resource candidates are visible in the stored AWS snapshot.";
+type WorkflowModalKind = "proactive" | "actionPlan" | "priority";
+
+type WorkflowModalItem = {
+  category: string;
+  title: string;
+  severity: "ok" | "warning" | "critical";
+  reason: string;
+  action: string;
+};
+
+type FindingSource = "certificate" | "utilization" | "idle" | "financial" | "ecs" | "account";
+type FindingSeverity = "critical" | "high" | "medium" | "low" | "info";
+type FindingImpactType = "outage" | "cost" | "performance" | "security" | "operational";
+
+type NormalizedFinding = {
+  id: string;
+  source: FindingSource;
+  severity: FindingSeverity;
+  impactType: FindingImpactType;
+  title: string;
+  accountKey: string;
+  accountId: string;
+  region: string;
+  resourceType: string;
+  resourceId: string;
+  impactText: string;
+  evidence: string[];
+  recommendedAction: string;
+  estimatedMonthlySaving?: number | null;
+  daysRemaining?: number | null;
+  priorityScore: number;
+  raw: unknown;
+};
+
+function topSeverity(severities: Array<"ok" | "warning" | "critical">): "ok" | "warning" | "critical" {
+  if (severities.includes("critical")) return "critical";
+  if (severities.includes("warning")) return "warning";
+  return "ok";
 }
 
-function buildIdleLlmContext(rows: IdleResourceRow[]) {
-  return JSON.stringify(
-    {
-      source: "Analytics Hub idle resources snapshot built from AWS EC2 describe_instances and CloudWatch AWS/EC2 CPU/network metrics.",
-      row_count: rows.length,
-      rows: rows.slice(0, 50).map((row) => ({
-        account: row.account,
-        resource_type: row.resourceType,
-        resource_id: row.resourceId,
-        name: row.name,
-        region: row.region,
-        severity: row.severity,
-        idle: row.idle,
-        signal: row.signal,
-        finding: row.finding,
-        implication: row.implication,
-        suggested_action: row.suggestedAction,
-        cpu_average_pct: row.cpuAveragePct,
-        network_average_bytes: row.networkAverageBytes,
-      })),
-    },
-    null,
-    2,
+function mapOpsSeverity(severity: "ok" | "warning" | "critical"): FindingSeverity {
+  if (severity === "critical") return "critical";
+  if (severity === "warning") return "medium";
+  return "info";
+}
+
+function certificateRiskSeverity(daysRemaining: number): FindingSeverity {
+  if (daysRemaining <= 7) return "critical";
+  if (daysRemaining <= 15) return "high";
+  if (daysRemaining <= 30) return "medium";
+  if (daysRemaining <= 60) return "low";
+  return "info";
+}
+
+function certificateRiskLabel(daysRemaining: number) {
+  if (daysRemaining <= 7) return "Critical";
+  if (daysRemaining <= 15) return "High";
+  if (daysRemaining <= 30) return "Medium";
+  if (daysRemaining <= 60) return "Low";
+  return "Healthy";
+}
+
+function certificateRecommendedAction(item: AnalyticsCertificateItem & { in_use_by?: string[]; renewal_eligibility?: string; type?: string }) {
+  if (item.days_to_expiry <= 7) return "Critical: renew or replace immediately.";
+  const typeText = `${item.type ?? ""} ${item.renewal_eligibility ?? ""}`.toLowerCase();
+  if (typeText.includes("import")) return "Prepare renewed certificate and import before expiry.";
+  if (item.in_use_by?.length) return "Validate dependent service before replacement.";
+  if (typeText.includes("eligible") || typeText.includes("amazon")) return "Monitor DNS/email validation and renewal status.";
+  return "Confirm renewal owner, validation status, and dependent services before the expiry window closes.";
+}
+
+function severityTone(severity: FindingSeverity) {
+  return {
+    critical: "border-red-200 bg-red-50 text-red-700",
+    high: "border-orange-200 bg-orange-50 text-orange-700",
+    medium: "border-amber-200 bg-amber-50 text-amber-800",
+    low: "border-sky-200 bg-sky-50 text-sky-700",
+    info: "border-slate-200 bg-white/70 text-slate-600",
+  }[severity];
+}
+
+function FindingSeverityBadge({ severity }: { severity: FindingSeverity }) {
+  return (
+    <span className={classNames("inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold uppercase", severityTone(severity))}>
+      {severity}
+    </span>
   );
+}
+
+function scoreFinding(
+  finding: Omit<NormalizedFinding, "priorityScore">,
+  repeatedKeys: Map<string, number>,
+) {
+  const severityScore = {
+    critical: 100,
+    high: 75,
+    medium: 45,
+    low: 20,
+    info: 5,
+  }[finding.severity];
+  const normalizedAccount = finding.accountKey.toLowerCase();
+  const repeatedKey = `${finding.source}:${finding.resourceType}:${finding.title.toLowerCase()}`;
+  return (
+    severityScore +
+    (finding.impactType === "outage" ? 20 : 0) +
+    (finding.impactType === "security" ? 15 : 0) +
+    (normalizedAccount.includes("prod") || normalizedAccount.includes("production") ? 15 : 0) +
+    ((finding.daysRemaining ?? Number.POSITIVE_INFINITY) <= 7 ? 10 : 0) +
+    ((finding.estimatedMonthlySaving ?? 0) > 50 ? 10 : 0) +
+    ((repeatedKeys.get(repeatedKey) ?? 0) > 1 ? 5 : 0)
+  );
+}
+
+function buildNormalizedFindings({
+  certificates,
+  utilizationRows,
+  idleRows,
+  spendItems,
+  accounts,
+}: {
+  certificates: Array<AnalyticsCertificateItem & { account_key: string }>;
+  utilizationRows: UtilizationInsightRow[];
+  idleRows: IdleResourceRow[];
+  spendItems: Array<{ service: string; cost: number; share: string }>;
+  accounts: AnalyticsHubAccountSnapshot[];
+}) {
+  const draftFindings: Array<Omit<NormalizedFinding, "priorityScore">> = [];
+  const accountRegion = new Map(accounts.map((account) => [account.account_key, account.region]));
+  const accountId = new Map(accounts.map((account) => [account.account_key, account.account_id]));
+
+  for (const item of certificates) {
+    const rawRecord = item as AnalyticsCertificateItem & { account_key: string; in_use_by?: string[]; renewal_eligibility?: string; type?: string };
+    draftFindings.push({
+      id: `certificate:${item.account_key}:${item.certificate_arn}`,
+      source: "certificate",
+      severity: certificateRiskSeverity(item.days_to_expiry),
+      impactType: item.days_to_expiry <= 30 ? "outage" : "operational",
+      title: item.domain_name,
+      accountKey: item.account_key,
+      accountId: accountId.get(item.account_key) ?? "",
+      region: accountRegion.get(item.account_key) ?? "-",
+      resourceType: "ACM certificate",
+      resourceId: item.certificate_arn,
+      impactText: `${item.domain_name} expires in ${item.days_to_expiry} day${item.days_to_expiry === 1 ? "" : "s"}.`,
+      evidence: [
+        `Expiry date: ${item.expiry_date}`,
+        `Days remaining: ${item.days_to_expiry}`,
+        rawRecord.renewal_eligibility ? `Renewal: ${rawRecord.renewal_eligibility}` : "",
+        rawRecord.in_use_by?.length ? `Attached: ${rawRecord.in_use_by.join(", ")}` : "",
+      ].filter(Boolean),
+      recommendedAction: certificateRecommendedAction(rawRecord),
+      daysRemaining: item.days_to_expiry,
+      raw: item,
+    });
+  }
+
+  for (const row of utilizationRows) {
+    if (row.utilizationStatus === "balanced" && row.severity === "ok") continue;
+    const overused = row.utilizationStatus === "overused" || row.severity === "critical";
+    draftFindings.push({
+      id: `utilization:${row.accountKey}:${row.resourceId || row.service}`,
+      source: "utilization",
+      severity: row.severity === "critical" ? "critical" : row.utilizationStatus === "overused" ? "high" : "medium",
+      impactType: overused ? "performance" : "cost",
+      title: `${row.resourceType}: ${row.service}`,
+      accountKey: row.accountKey,
+      accountId: accountId.get(row.accountKey) ?? "",
+      region: row.region,
+      resourceType: row.resourceType,
+      resourceId: row.resourceId || row.service,
+      impactText: overused ? "Capacity pressure may affect performance or availability." : "Provisioned capacity may be higher than current demand.",
+      evidence: row.evidenceItems.length ? row.evidenceItems : [row.reason],
+      recommendedAction: row.solution,
+      estimatedMonthlySaving: row.utilizationStatus === "underused" ? 75 : null,
+      raw: row.raw,
+    });
+  }
+
+  for (const row of idleRows) {
+    draftFindings.push({
+      id: `idle:${row.accountKey}:${row.resourceId}`,
+      source: "idle",
+      severity: mapOpsSeverity(row.severity),
+      impactType: "cost",
+      title: `${row.resourceType}: ${row.resourceId}`,
+      accountKey: row.accountKey,
+      accountId: accountId.get(row.accountKey) ?? "",
+      region: row.region,
+      resourceType: row.resourceType,
+      resourceId: row.resourceId,
+      impactText: row.implication,
+      evidence: [row.finding, row.signal, row.cpuAveragePct != null ? `CPU ${row.cpuAveragePct}%` : "", row.networkAverageBytes != null ? `Network ${Math.round(row.networkAverageBytes)} bytes` : ""].filter(Boolean),
+      recommendedAction: row.suggestedAction,
+      estimatedMonthlySaving: row.estimatedMonthlyWaste,
+      raw: row.raw,
+    });
+  }
+
+  spendItems
+    .filter((item) => item.cost > 0 && Number(item.share) >= 35)
+    .slice(0, 5)
+    .forEach((item) => {
+      draftFindings.push({
+        id: `financial:${item.service}`,
+        source: "financial",
+        severity: item.cost > 500 ? "medium" : "low",
+        impactType: "cost",
+        title: `${item.service} spend concentration`,
+        accountKey: "selected",
+        accountId: "",
+        region: "multi-region",
+        resourceType: "AWS service spend",
+        resourceId: item.service,
+        impactText: `${item.service} accounts for ${item.share}% of selected 30 day spend.`,
+        evidence: [`30 day spend: ${formatCurrency(item.cost)}`, `Share: ${item.share}%`],
+        recommendedAction: "Review service-level cost drivers and confirm spend is expected for the selected accounts.",
+        raw: item,
+      });
+    });
+
+  for (const account of accounts) {
+    for (const cluster of account.ecs_clusters ?? []) {
+      if (cluster.severity === "ok") continue;
+      draftFindings.push({
+        id: `ecs:${account.account_key}:${cluster.cluster_arn ?? cluster.cluster_name}`,
+        source: "ecs",
+        severity: cluster.severity === "critical" ? "high" : "medium",
+        impactType: "operational",
+        title: `ECS cluster ${cluster.cluster_name}`,
+        accountKey: account.account_key,
+        accountId: account.account_id,
+        region: account.region,
+        resourceType: "ECS cluster",
+        resourceId: cluster.cluster_arn ?? cluster.cluster_name,
+        impactText: cluster.insight,
+        evidence: [`Status: ${cluster.status ?? "unknown"}`, `Services: ${cluster.services.length}`],
+        recommendedAction: "Open ECS Health, inspect affected services and task events, then discuss the cluster evidence in chat.",
+        raw: cluster,
+      });
+    }
+  }
+
+  const repeatedKeys = new Map<string, number>();
+  for (const finding of draftFindings) {
+    const key = `${finding.source}:${finding.resourceType}:${finding.title.toLowerCase()}`;
+    repeatedKeys.set(key, (repeatedKeys.get(key) ?? 0) + 1);
+  }
+
+  return draftFindings
+    .map((finding) => ({ ...finding, priorityScore: scoreFinding(finding, repeatedKeys) }))
+    .sort((a, b) => b.priorityScore - a.priorityScore || a.title.localeCompare(b.title));
+}
+
+function findingContextType(source: FindingSource) {
+  return {
+    certificate: "certificate_expiry",
+    utilization: "utilization",
+    idle: "idle",
+    financial: "financial",
+    ecs: "ecs",
+    account: "account",
+  }[source];
+}
+
+function findingToDiscussionRows(finding: NormalizedFinding) {
+  return [
+    ["source", "analytics_hub"],
+    ["context_type", "priority_finding"],
+    ["finding_source", finding.source],
+    ["source_context_type", findingContextType(finding.source)],
+    ["accountKey", finding.accountKey],
+    ["accountId", finding.accountId],
+    ["region", finding.region],
+    ["resource_type", finding.resourceType],
+    ["resource_id", finding.resourceId],
+    ["severity", finding.severity],
+    ["impact_type", finding.impactType],
+    ["impact", finding.impactText],
+    ["evidence", finding.evidence.join(" | ")],
+    ["recommendedAction", finding.recommendedAction],
+    ["raw", JSON.stringify(finding.raw, null, 2)],
+  ];
+}
+
+function findingToChatContext(finding: NormalizedFinding) {
+  return {
+    source: "analytics_hub",
+    context_type: "priority_finding",
+    finding_source: finding.source,
+    accountKey: finding.accountKey,
+    accountId: finding.accountId,
+    region: finding.region,
+    resourceType: finding.resourceType,
+    resourceId: finding.resourceId,
+    severity: finding.severity,
+    impactType: finding.impactType,
+    impactText: finding.impactText,
+    evidence: finding.evidence,
+    recommendedAction: finding.recommendedAction,
+    raw: finding.raw,
+  };
+}
+
+function topFinancialService(items: Array<{ service: string; cost: number; share: string }>) {
+  return items.find((item) => item.cost > 0);
+}
+
+function buildProactiveRecommendationItems({
+  idleRows,
+  utilizationRows,
+  certificates,
+  spendItems,
+}: {
+  idleRows: IdleResourceRow[];
+  utilizationRows: UtilizationInsightRow[];
+  certificates: Array<AnalyticsCertificateItem & { account_key: string }>;
+  spendItems: Array<{ service: string; cost: number; share: string }>;
+}): WorkflowModalItem[] {
+  const urgentCertificates = certificates.filter((item) => item.days_to_expiry < 30);
+  const utilizationIssues = utilizationRows.filter((row) => row.utilizationStatus !== "balanced" || row.severity !== "ok");
+  const topSpend = topFinancialService(spendItems);
+  const items: WorkflowModalItem[] = [];
+
+  if (idleRows.length > 0) {
+    const severity = topSeverity(idleRows.map((row) => row.severity));
+    items.push({
+      category: "Idle resources",
+      title: `${idleRows.length} cleanup candidate${idleRows.length === 1 ? "" : "s"}`,
+      severity,
+      reason: idleRows.slice(0, 2).map((row) => `${row.account}/${row.resourceId}`).join(", "),
+      action: "Validate ownership, then stop, schedule, rightsize, or terminate stale capacity.",
+    });
+  }
+  if (utilizationIssues.length > 0) {
+    const severity = topSeverity(utilizationIssues.map((row) => row.severity));
+    items.push({
+      category: "Utilization",
+      title: `${utilizationIssues.length} underused or overused signal${utilizationIssues.length === 1 ? "" : "s"}`,
+      severity,
+      reason: utilizationIssues.slice(0, 2).map((row) => `${row.account}/${row.service}`).join(", "),
+      action: "Review Compute Optimizer/ECS evidence before scaling capacity up or down.",
+    });
+  }
+  if (urgentCertificates.length > 0) {
+    items.push({
+      category: "Certificates",
+      title: `${urgentCertificates.length} certificate${urgentCertificates.length === 1 ? "" : "s"} under 30 days`,
+      severity: "critical",
+      reason: urgentCertificates.slice(0, 2).map((item) => `${formatAccountLabel(item.account_key)}/${item.domain_name}`).join(", "),
+      action: "Confirm renewal path and owner before the expiry window closes.",
+    });
+  }
+  if (topSpend) {
+    items.push({
+      category: "Financial",
+      title: `${topSpend.service} leads selected spend`,
+      severity: "warning",
+      reason: `${formatCurrency(topSpend.cost)} across selected accounts (${topSpend.share}%).`,
+      action: "Use Financial Impact discussion to inspect drivers and confirm if spend is expected.",
+    });
+  }
+
+  return items.slice(0, 6);
+}
+
+function buildActionPlanItems({
+  idleRows,
+  utilizationRows,
+  certificates,
+}: {
+  idleRows: IdleResourceRow[];
+  utilizationRows: UtilizationInsightRow[];
+  certificates: Array<AnalyticsCertificateItem & { account_key: string }>;
+}): WorkflowModalItem[] {
+  const urgentCertificates = certificates.filter((item) => item.days_to_expiry < 30);
+  const utilizationIssues = utilizationRows.filter((row) => row.utilizationStatus !== "balanced" || row.severity !== "ok");
+  const items: WorkflowModalItem[] = [];
+
+  urgentCertificates.slice(0, 2).forEach((item, index) => {
+    items.push({
+      category: `Step ${items.length + 1}`,
+      title: `Renew ${item.domain_name}`,
+      severity: index === 0 ? "critical" : "warning",
+      reason: `${item.days_to_expiry} day${item.days_to_expiry === 1 ? "" : "s"} left in ${formatAccountLabel(item.account_key)}.`,
+      action: "Assign certificate owner, validate DNS/ACM status, and schedule renewal verification.",
+    });
+  });
+  utilizationIssues.slice(0, 2).forEach((row) => {
+    items.push({
+      category: `Step ${items.length + 1}`,
+      title: `Review ${row.service}`,
+      severity: row.severity,
+      reason: `${row.utilizationStatus} signal from ${row.source}.`,
+      action: row.solution,
+    });
+  });
+  idleRows.slice(0, 2).forEach((row) => {
+    items.push({
+      category: `Step ${items.length + 1}`,
+      title: `Validate ${row.resourceId}`,
+      severity: row.severity,
+      reason: row.signal,
+      action: row.suggestedAction,
+    });
+  });
+
+  return items.slice(0, 6);
+}
+
+function buildPriorityIssueItems({
+  idleRows,
+  utilizationRows,
+  certificates,
+}: {
+  idleRows: IdleResourceRow[];
+  utilizationRows: UtilizationInsightRow[];
+  certificates: Array<AnalyticsCertificateItem & { account_key: string }>;
+}): WorkflowModalItem[] {
+  const certificateItems = certificates.map((item): WorkflowModalItem => ({
+    category: "Certificate",
+    title: item.domain_name,
+    severity: item.days_to_expiry < 30 ? "critical" : "warning",
+    reason: `${item.days_to_expiry} day${item.days_to_expiry === 1 ? "" : "s"} to expiry in ${formatAccountLabel(item.account_key)}.`,
+    action: "Prioritize renewal validation and owner confirmation.",
+  }));
+  const utilizationItems = utilizationRows
+    .filter((row) => row.utilizationStatus !== "balanced" || row.severity !== "ok")
+    .map((row): WorkflowModalItem => ({
+      category: "Utilization",
+      title: row.service,
+      severity: row.severity,
+      reason: row.reason,
+      action: row.solution,
+    }));
+  const idleItems = idleRows.map((row): WorkflowModalItem => ({
+    category: "Idle",
+    title: row.resourceId,
+    severity: row.severity,
+    reason: row.finding,
+    action: row.suggestedAction,
+  }));
+  const rank = { critical: 0, warning: 1, ok: 2 };
+  return [...certificateItems, ...utilizationItems, ...idleItems]
+    .sort((a, b) => rank[a.severity] - rank[b.severity] || a.category.localeCompare(b.category))
+    .slice(0, 6);
 }
 
 function UtilizationBar({ percent, status }: { percent: number; status: string }) {
@@ -1766,6 +2432,164 @@ function SeverityBadge({ severity }: { severity: "ok" | "warning" | "critical" }
   );
 }
 
+type OperationsBriefItem = {
+  id: string;
+  title: string;
+  explanation: string;
+  accountKey: string;
+  region: string;
+  severity: FindingSeverity;
+  finding: NormalizedFinding | null;
+};
+
+function OperationsBrief({
+  findings,
+  spendItems,
+  idleRows,
+  utilizationRows,
+  certificates,
+  accounts,
+  storageStatus,
+  updatedLabel,
+  onDiscuss,
+}: {
+  findings: NormalizedFinding[];
+  spendItems: Array<{ service: string; cost: number; share: string }>;
+  idleRows: IdleResourceRow[];
+  utilizationRows: UtilizationInsightRow[];
+  certificates: Array<AnalyticsCertificateItem & { account_key: string }>;
+  accounts: AnalyticsHubAccountSnapshot[];
+  storageStatus: AnalyticsHubStorageStatus | null;
+  updatedLabel: string;
+  onDiscuss: (finding: NormalizedFinding) => void;
+}) {
+  const topRisk = findings[0] ?? null;
+  const topSpend = spendItems[0] ?? null;
+  const topSaving = [...idleRows].sort((a, b) => (b.estimatedMonthlyWaste ?? 0) - (a.estimatedMonthlyWaste ?? 0))[0] ?? null;
+  const nextExpiry = certificates[0] ?? null;
+  const utilizationWarning = utilizationRows.find((row) => row.utilizationStatus !== "balanced" || row.severity !== "ok") ?? null;
+  const ecsWarning = findings.find((finding) => finding.source === "ecs") ?? null;
+  const storageLabel = storageStatus?.active_storage_source === "sqlite" ? "SQLite active" : "Cached fallback";
+  const briefItems: OperationsBriefItem[] = [
+    topRisk
+      ? {
+          id: "top-risk",
+          title: topRisk.title,
+          explanation: topRisk.impactText,
+          accountKey: topRisk.accountKey,
+          region: topRisk.region,
+          severity: topRisk.severity,
+          finding: topRisk,
+        }
+      : null,
+    topSpend
+      ? {
+          id: "top-cost",
+          title: `${topSpend.service} leads selected spend`,
+          explanation: `${formatCurrency(topSpend.cost)} across selected accounts (${topSpend.share}%).`,
+          accountKey: "selected",
+          region: "multi-region",
+          severity: Number(topSpend.share) >= 50 ? "medium" : "low",
+          finding: findings.find((finding) => finding.source === "financial" && finding.resourceId === topSpend.service) ?? null,
+        }
+      : null,
+    topSaving
+      ? {
+          id: "top-saving",
+          title: `${topSaving.resourceType} ${topSaving.resourceId} can be reviewed`,
+          explanation: topSaving.estimatedMonthlyWaste ? `${formatCurrency(topSaving.estimatedMonthlyWaste)} estimated monthly waste.` : topSaving.implication,
+          accountKey: topSaving.accountKey,
+          region: topSaving.region,
+          severity: mapOpsSeverity(topSaving.severity),
+          finding: findings.find((finding) => finding.source === "idle" && finding.resourceId === topSaving.resourceId) ?? null,
+        }
+      : null,
+    nextExpiry
+      ? {
+          id: "expiry",
+          title: `${nextExpiry.domain_name} expires in ${nextExpiry.days_to_expiry} days`,
+          explanation: "Certificate renewal needs owner and validation review.",
+          accountKey: nextExpiry.account_key,
+          region: accounts.find((account) => account.account_key === nextExpiry.account_key)?.region ?? "-",
+          severity: certificateRiskSeverity(nextExpiry.days_to_expiry),
+          finding: findings.find((finding) => finding.source === "certificate" && finding.resourceId === nextExpiry.certificate_arn) ?? null,
+        }
+      : null,
+    utilizationWarning
+      ? {
+          id: "utilization",
+          title: `${utilizationWarning.service} is ${utilizationWarning.utilizationStatus}`,
+          explanation: utilizationWarning.reason,
+          accountKey: utilizationWarning.accountKey,
+          region: utilizationWarning.region,
+          severity: utilizationWarning.severity === "critical" ? "critical" : utilizationWarning.utilizationStatus === "overused" ? "high" : "medium",
+          finding: findings.find((finding) => finding.source === "utilization" && finding.resourceId === utilizationWarning.resourceId) ?? null,
+        }
+      : null,
+    ecsWarning
+      ? {
+          id: "ecs",
+          title: ecsWarning.title,
+          explanation: ecsWarning.impactText,
+          accountKey: ecsWarning.accountKey,
+          region: ecsWarning.region,
+          severity: ecsWarning.severity,
+          finding: ecsWarning,
+        }
+      : null,
+  ].filter((item): item is OperationsBriefItem => item !== null);
+
+  return (
+    <section className={classNames(glassPanelClass, "mt-6 p-5 text-slate-900 sm:p-6 content-visibility-auto")}>
+      <div className="absolute inset-x-6 top-0 h-px bg-white/70" aria-hidden="true" />
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">Operations Brief</div>
+          <div className="mt-2 text-lg font-semibold tracking-tight text-slate-950">Today's AWS Brief</div>
+          <div className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+            Your AWS operations co-pilot - watching every connected account, explaining what matters, ranking risks by business impact, and guiding safe, approved fixes.
+          </div>
+        </div>
+        <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-3 lg:min-w-[27rem]">
+          <span className="rounded-full border border-white/70 bg-white/62 px-3 py-2 font-semibold text-slate-800">{storageLabel}</span>
+          <span className="rounded-full border border-white/70 bg-white/62 px-3 py-2">{updatedLabel}</span>
+          <span className="rounded-full border border-white/70 bg-white/62 px-3 py-2">{accounts.length} selected account{accounts.length === 1 ? "" : "s"}</span>
+        </div>
+      </div>
+      {briefItems.length > 0 ? (
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {briefItems.map((item) => (
+            <div key={item.id} className="rounded-[20px] border border-white/65 bg-white/54 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-slate-950">{item.title}</div>
+                  <div className="mt-2 text-sm leading-6 text-slate-600">{item.explanation}</div>
+                </div>
+                <FindingSeverityBadge severity={item.severity} />
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-slate-500">{formatAccountLabel(item.accountKey)} / {item.region}</div>
+                <button
+                  type="button"
+                  onClick={() => item.finding && onDiscuss(item.finding)}
+                  disabled={!item.finding}
+                  className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Discuss
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-5 rounded-[20px] border border-white/65 bg-white/54 p-5 text-sm leading-6 text-slate-600">
+          No AWS findings yet. Connect accounts or refresh Analytics Hub to populate the brief.
+        </div>
+      )}
+    </section>
+  );
+}
+
 function UtilizationInsightsCard({
   rows,
   analysis,
@@ -1775,6 +2599,7 @@ function UtilizationInsightsCard({
   onAnalyze,
   onRefresh,
   onDiscuss,
+  onDiscussRow,
 }: {
   rows: UtilizationInsightRow[];
   analysis: string;
@@ -1784,28 +2609,54 @@ function UtilizationInsightsCard({
   onAnalyze: () => void;
   onRefresh: () => void;
   onDiscuss: () => void;
+  onDiscussRow?: (row: UtilizationInsightRow) => void;
 }) {
+  const underusedCount = rows.filter((row) => row.utilizationStatus === "underused").length;
+  const overusedCount = rows.filter((row) => row.utilizationStatus === "overused" || row.severity === "critical").length;
+  const potentialSaving = rows
+    .filter((row) => row.utilizationStatus === "underused")
+    .reduce((sum) => sum + 75, 0);
+  const performanceRiskCount = rows.filter((row) => row.utilizationStatus === "overused" || row.pending > 0 || row.severity === "critical").length;
+  const computeOptimizerRows = rows.filter((row) => row.source.toLowerCase().includes("compute optimizer") || row.cluster.toLowerCase().includes("compute optimizer")).length;
   const tableRows = rows.map((row) => [
-    row.account,
-    row.cluster,
+    <SeverityBadge key={`${row.account}-${row.resourceId}-severity`} severity={row.severity} />,
+    row.resourceType,
     <div key={`${row.account}-${row.cluster}-${row.service}-resource`} className="min-w-0">
       <div className="font-semibold text-slate-900">{row.service}</div>
-      <div className="text-xs text-slate-500">{row.resourceType}</div>
+      <div className="text-xs text-slate-500">{row.resourceId || row.cluster}</div>
     </div>,
-    row.desired > 0 || row.running > 0 ? `${row.running}/${row.desired}` : "-",
-    row.pending ? String(row.pending) : "-",
-    <UtilizationBar key={`${row.account}-${row.cluster}-${row.service}-bar`} percent={row.utilizationPct} status={row.utilizationStatus} />,
-    <SeverityBadge key={`${row.account}-${row.cluster}-${row.service}-severity`} severity={row.severity} />,
+    row.account,
+    row.region,
+    <div key={`${row.account}-${row.resourceId}-finding`} className="min-w-[10rem]">
+      <div className="font-medium capitalize text-slate-900">{row.utilizationStatus}</div>
+      <div className="mt-1 text-xs text-slate-500">{row.source}</div>
+    </div>,
     <div key={`${row.account}-${row.cluster}-${row.service}-reason`} className="max-w-xl">
       <div className="font-medium text-slate-900">{row.reason}</div>
-      <div className="mt-1 text-slate-600">{row.solution}</div>
       <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-        <span>{row.source}</span>
         {row.cpuAveragePct != null ? <span>CPU {row.cpuAveragePct}%</span> : null}
         {row.memoryAveragePct != null ? <span>Memory {row.memoryAveragePct}%</span> : null}
+      </div>
+    </div>,
+    <pre key={`${row.account}-${row.resourceId}-current`} className="max-w-xs whitespace-pre-wrap rounded-xl bg-white/58 px-3 py-2 text-xs leading-5 text-slate-700">
+      {JSON.stringify(row.currentConfiguration ?? {}, null, 2)}
+    </pre>,
+    <pre key={`${row.account}-${row.resourceId}-recommended`} className="max-w-xs whitespace-pre-wrap rounded-xl bg-white/58 px-3 py-2 text-xs leading-5 text-slate-700">
+      {row.recommendedConfiguration ? JSON.stringify(row.recommendedConfiguration, null, 2) : row.desired > 0 || row.running > 0 ? `${row.running}/${row.desired} running, ${row.pending} pending` : "-"}
+    </pre>,
+    <div key={`${row.account}-${row.resourceId}-action`} className="max-w-md">
+      <div className="font-medium text-slate-900">{row.solution}</div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => onDiscussRow?.(row)}
+          className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700 transition hover:bg-sky-100"
+        >
+          Discuss
+        </button>
         {row.consoleUrl ? (
-          <a href={row.consoleUrl} target="_blank" rel="noreferrer" className="font-semibold text-sky-700 hover:text-sky-900">
-            Open in AWS
+          <a href={row.consoleUrl} target="_blank" rel="noreferrer" className="rounded-full border border-white/70 bg-white/70 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:bg-white">
+            Open AWS
           </a>
         ) : null}
       </div>
@@ -1826,9 +2677,9 @@ function UtilizationInsightsCard({
   return (
     <DataCard
       title="Utilization Insights"
-      headers={["Account", "Source", "Resource", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"]}
+      headers={["Severity", "Resource type", "Resource id/name", "Account", "Region", "Finding", "Reason", "Current config", "Recommended config", "Suggested action"]}
       rows={tableRows}
-      emptyText="No utilization rows are available yet. Refresh Analytics Hub after AWS credentials and Compute Optimizer access are configured."
+      emptyText="No utilization rows are available yet. Refresh after AWS credentials and Compute Optimizer access are configured."
       updatedLabel={updatedLabel}
       onRefresh={onRefresh}
       onDiscuss={onDiscuss}
@@ -1843,11 +2694,23 @@ function UtilizationInsightsCard({
         </summary>
         <div className="mt-3 text-sm leading-7 text-slate-700">{analysis}</div>
       </details>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <SummaryMetric label="Underused" value={String(underusedCount)} helper="Rightsizing candidates" tone={underusedCount > 0 ? "amber" : "slate"} />
+        <SummaryMetric label="Overused" value={String(overusedCount)} helper="Capacity pressure" tone={overusedCount > 0 ? "rose" : "slate"} />
+        <SummaryMetric label="Potential saving" value={formatCurrency(potentialSaving)} helper="Estimated from underused signals" tone={potentialSaving > 0 ? "emerald" : "slate"} />
+        <SummaryMetric label="Performance risk" value={String(performanceRiskCount)} helper="Overused or pending" tone={performanceRiskCount > 0 ? "rose" : "slate"} />
+        <SummaryMetric label="Compute Optimizer" value={computeOptimizerRows > 0 ? "Active" : "Missing"} helper={`${computeOptimizerRows} AWS-native rows`} tone={computeOptimizerRows > 0 ? "sky" : "amber"} />
+      </div>
+      {rows.length === 0 || computeOptimizerRows === 0 ? (
+        <div className="mt-4 rounded-[18px] border border-amber-200/70 bg-amber-50/80 px-4 py-3 text-sm leading-6 text-amber-900">
+          Compute Optimizer data is not visible in the cached snapshot yet. Refresh utilization after Compute Optimizer and IAM permissions are enabled.
+        </div>
+      ) : null}
       <div className="mt-5 overflow-x-auto rounded-[28px] border border-white/55 bg-white/36 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
         <table className="min-w-full border-collapse text-sm text-slate-800">
           <thead>
             <tr className="border-b border-slate-300/35 text-left text-[11px] uppercase tracking-[0.22em] text-slate-500">
-              {["Account", "Source", "Resource", "Running / Desired", "Pending", "Utilization", "Severity", "Reason / Solution"].map((header) => (
+              {["Severity", "Resource type", "Resource id/name", "Account", "Region", "Finding", "Reason", "Current config", "Recommended config", "Suggested action"].map((header) => (
                 <th key={header} className="px-4 py-4 font-semibold">
                   {header}
                 </th>
@@ -1867,8 +2730,8 @@ function UtilizationInsightsCard({
               ))
             ) : (
               <tr>
-                <td colSpan={8} className="px-4 py-7 text-slate-500">
-                  No utilization rows are available yet. Refresh Analytics Hub after AWS credentials and Compute Optimizer access are configured.
+                <td colSpan={10} className="px-4 py-7 text-slate-500">
+                  No utilization rows are available yet. Refresh after AWS credentials and Compute Optimizer access are configured.
                 </td>
               </tr>
             )}
@@ -1889,6 +2752,7 @@ function UtilizationInsightsModal({
   onAnalyze,
   onRefresh,
   onDiscuss,
+  onDiscussRow,
   onToggleTracked,
   onClose,
 }: {
@@ -1901,6 +2765,7 @@ function UtilizationInsightsModal({
   onAnalyze: () => void;
   onRefresh: () => void;
   onDiscuss: () => void;
+  onDiscussRow: (row: UtilizationInsightRow) => void;
   onToggleTracked: (key: string) => void;
   onClose: () => void;
 }) {
@@ -2020,6 +2885,7 @@ function UtilizationInsightsModal({
             onAnalyze={onAnalyze}
             onRefresh={onRefresh}
             onDiscuss={onDiscuss}
+            onDiscussRow={onDiscussRow}
           />
         </div>
       </div>
@@ -2027,111 +2893,482 @@ function UtilizationInsightsModal({
   );
 }
 
-function IdleResourcesCard({
-  rows,
-  analysis,
-  isAnalyzing,
-  updatedLabel,
-  onAnalyze,
-  onRefresh,
+function WorkflowModal({
+  title,
+  subtitle,
+  items,
+  onClose,
   onDiscuss,
+  onRefresh,
 }: {
-  rows: IdleResourceRow[];
-  analysis: string;
-  isAnalyzing: boolean;
-  updatedLabel: string;
-  onAnalyze: () => void;
-  onRefresh: () => void;
+  title: string;
+  subtitle: string;
+  items: WorkflowModalItem[];
+  onClose: () => void;
   onDiscuss: () => void;
+  onRefresh: () => void;
 }) {
-  const tableRows = rows.map((row) => [
-    row.account,
-    row.resourceType,
-    <div key={`${row.resourceId}-resource`} className="min-w-0">
-      <div className="font-semibold text-slate-900">{row.resourceId}</div>
-      {row.name ? <div className="text-xs text-slate-500">{row.name}</div> : null}
-    </div>,
-    <SeverityBadge key={`${row.resourceId}-severity`} severity={row.severity} />,
-    <div key={`${row.resourceId}-signal`} className="max-w-lg">
-      <div className="font-medium text-slate-900">{row.finding}</div>
-      <div className="mt-1 text-slate-600">{row.signal}</div>
-      <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-        {row.cpuAveragePct != null ? <span>CPU {row.cpuAveragePct}%</span> : null}
-        {row.networkAverageBytes != null ? <span>Network {Math.round(row.networkAverageBytes)} bytes</span> : null}
-        {row.consoleUrl ? (
-          <a href={row.consoleUrl} target="_blank" rel="noreferrer" className="font-semibold text-sky-700 hover:text-sky-900">
-            Open in AWS
-          </a>
-        ) : null}
-      </div>
-    </div>,
-    <div key={`${row.resourceId}-impact`} className="max-w-xl">
-      <div className="font-medium text-slate-900">{row.implication}</div>
-      <div className="mt-1 text-slate-600">{row.suggestedAction}</div>
-    </div>,
-  ]);
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/42 px-4 py-6 backdrop-blur-sm">
+      <div className="w-full max-w-3xl rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,rgba(247,251,255,0.98),rgba(223,237,255,0.96))] p-5 text-slate-900 shadow-[0_30px_90px_rgba(15,23,42,0.28)]">
+        <div className="flex items-start justify-between gap-4 border-b border-white/60 pb-4">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-slate-500">{title}</div>
+            <div className="mt-2 text-sm leading-6 text-slate-600">{subtitle}</div>
+          </div>
+          <button type="button" onClick={onClose} className={glassButtonClass} aria-label={`Close ${title}`} title="Close">
+            <CloseIcon />
+          </button>
+        </div>
 
-  const controls = (
-    <button
-      type="button"
-      onClick={onAnalyze}
-      disabled={isAnalyzing || rows.length === 0}
-      className="rounded-full border border-white/55 bg-white/58 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-700 transition hover:bg-white/76 disabled:cursor-not-allowed disabled:opacity-55"
-    >
-      {isAnalyzing ? "Analyzing" : "Analyze"}
-    </button>
+        <div className="mt-4 max-h-[28rem] overflow-y-auto pr-1">
+          {items.length > 0 ? (
+            <div className="grid gap-3">
+              {items.map((item, index) => (
+                <div
+                  key={`${item.category}-${item.title}-${index}`}
+                  className="rounded-[18px] border border-white/65 bg-white/58 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{item.category}</div>
+                      <div className="mt-1 text-base font-semibold text-slate-950">{item.title}</div>
+                    </div>
+                    <SeverityBadge severity={item.severity} />
+                  </div>
+                  <div className="mt-3 text-sm leading-6 text-slate-700">{item.reason}</div>
+                  <div className="mt-2 rounded-[14px] border border-sky-100 bg-sky-50/82 px-3 py-2 text-sm font-medium leading-6 text-sky-950">
+                    {item.action}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-[18px] border border-white/65 bg-white/58 p-5 text-sm leading-6 text-slate-600">
+              No current signals in cached snapshot.
+            </div>
+          )}
+        </div>
+
+        <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
+          <button type="button" onClick={onRefresh} className="rounded-full border border-white/65 bg-white/58 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-white">
+            Refresh Signals
+          </button>
+          <button
+            type="button"
+            onClick={onDiscuss}
+            disabled={items.length === 0}
+            className="rounded-full border border-sky-300/60 bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_14px_28px_rgba(2,132,199,0.18)] transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            Discuss
+          </button>
+        </div>
+      </div>
+    </div>
   );
+}
+
+type ResourceDoctorFilter = "all" | "critical" | "cost" | "performance" | "expiry" | "ecs" | "certificates";
+
+function ResourceDoctor({
+  findings,
+  filter,
+  onFilterChange,
+  onDiscuss,
+  onPlan,
+  onRefreshSource,
+}: {
+  findings: NormalizedFinding[];
+  filter: ResourceDoctorFilter;
+  onFilterChange: (filter: ResourceDoctorFilter) => void;
+  onDiscuss: (finding: NormalizedFinding) => void;
+  onPlan: (finding: NormalizedFinding) => void;
+  onRefreshSource: (source: FindingSource) => void;
+}) {
+  const filterOptions: Array<{ key: ResourceDoctorFilter; label: string }> = [
+    { key: "all", label: "All" },
+    { key: "critical", label: "Critical" },
+    { key: "cost", label: "Cost" },
+    { key: "performance", label: "Performance" },
+    { key: "expiry", label: "Expiry" },
+    { key: "ecs", label: "ECS" },
+    { key: "certificates", label: "Certificates" },
+  ];
+  const grouped = new Map<string, NormalizedFinding[]>();
+  for (const finding of findings) {
+    const key = `${finding.accountKey}::${finding.region}::${finding.resourceType}::${finding.resourceId}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), finding]);
+  }
+  const resourceRows = [...grouped.values()]
+    .map((items) => {
+      const sortedItems = [...items].sort((a, b) => b.priorityScore - a.priorityScore);
+      const primary = sortedItems[0];
+      return {
+        primary,
+        findings: sortedItems,
+        hasCost: sortedItems.some((finding) => finding.impactType === "cost"),
+        hasPerformance: sortedItems.some((finding) => finding.impactType === "performance"),
+        hasExpiry: sortedItems.some((finding) => finding.source === "certificate"),
+        hasEcs: sortedItems.some((finding) => finding.source === "ecs" || finding.resourceType.toLowerCase().includes("ecs")),
+      };
+    })
+    .filter((item) => {
+      if (filter === "all") return true;
+      if (filter === "critical") return item.primary.severity === "critical" || item.primary.severity === "high";
+      if (filter === "cost") return item.hasCost;
+      if (filter === "performance") return item.hasPerformance;
+      if (filter === "expiry") return item.hasExpiry;
+      if (filter === "ecs") return item.hasEcs;
+      if (filter === "certificates") return item.primary.source === "certificate";
+      return true;
+    })
+    .slice(0, 12);
 
   return (
+    <section className={classNames(glassPanelClass, "mt-6 p-5 text-slate-900 sm:p-6 content-visibility-auto")}>
+      <div className="absolute inset-x-6 top-0 h-px bg-white/70" aria-hidden="true" />
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">Resource Doctor</div>
+          <div className="mt-2 text-lg font-semibold tracking-tight text-slate-950">Inspect resources by health, cost, utilization, and expiry</div>
+          <div className="mt-2 text-sm leading-6 text-slate-600">One place to watch AWS risks, understand impact, and act safely.</div>
+        </div>
+        <div className="flex max-w-full gap-2 overflow-x-auto pb-1">
+          {filterOptions.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => onFilterChange(option.key)}
+              className={classNames(
+                "shrink-0 rounded-full border px-3 py-2 text-xs font-semibold transition",
+                filter === option.key
+                  ? "border-sky-200 bg-sky-600 text-white shadow-[0_12px_24px_rgba(2,132,199,0.16)]"
+                  : "border-white/70 bg-white/60 text-slate-700 hover:bg-white",
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {resourceRows.length > 0 ? (
+        <div className="mt-5 grid max-h-[34rem] gap-3 overflow-y-auto pr-1 lg:grid-cols-2">
+          {resourceRows.map(({ primary, findings: relatedFindings, hasCost, hasPerformance, hasExpiry, hasEcs }) => (
+            <div key={primary.id} className="rounded-[20px] border border-white/65 bg-white/54 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-slate-950">{primary.resourceId || primary.title}</div>
+                  <div className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">{primary.resourceType}</div>
+                </div>
+                <FindingSeverityBadge severity={primary.severity} />
+              </div>
+              <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+                <span>{formatAccountLabel(primary.accountKey)} / {primary.region}</span>
+                <span>{relatedFindings.length} signal{relatedFindings.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {hasCost ? <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Cost</span> : null}
+                {hasPerformance ? <span className="rounded-full border border-amber-100 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">Performance</span> : null}
+                {hasExpiry ? <span className="rounded-full border border-red-100 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">Expiry</span> : null}
+                {hasEcs ? <span className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">ECS</span> : null}
+              </div>
+              <div className="mt-3 rounded-2xl border border-white/60 bg-white/58 px-3 py-2 text-sm leading-6 text-slate-700">
+                <div className="font-medium text-slate-900">{primary.impactText}</div>
+                <div className="mt-1 text-slate-600">{primary.recommendedAction}</div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={() => onDiscuss(primary)} className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-100">
+                  Discuss resource
+                </button>
+                <button type="button" onClick={() => onPlan(primary)} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">
+                  Create action plan
+                </button>
+                <button type="button" onClick={() => onRefreshSource(primary.source)} className="rounded-full border border-white/70 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white">
+                  Refresh related data
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-5 rounded-[20px] border border-white/65 bg-white/54 p-5 text-sm leading-6 text-slate-600">
+          No resource-level findings match this view yet. Refresh Analytics Hub or select connected accounts to populate Resource Doctor.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PriorityActionQueue({
+  findings,
+  updatedLabel,
+  ignoredIds,
+  onDiscuss,
+  onDetails,
+  onPlan,
+  onRefreshSource,
+  onIgnore,
+}: {
+  findings: NormalizedFinding[];
+  updatedLabel: string;
+  ignoredIds: Set<string>;
+  onDiscuss: (finding: NormalizedFinding) => void;
+  onDetails: (finding: NormalizedFinding) => void;
+  onPlan: (finding: NormalizedFinding) => void;
+  onRefreshSource: (source: FindingSource) => void;
+  onIgnore: (findingId: string) => void;
+}) {
+  const visibleFindings = findings.filter((finding) => !ignoredIds.has(finding.id)).slice(0, 12);
+  return (
     <DataCard
-      title="Detect Idle Resources"
-      headers={["Account", "Resource Type", "Resource", "Severity", "Signal", "Implication / Action"]}
-      rows={tableRows}
-      emptyText="No idle resources are available in the current AWS snapshot."
+      title="Priority Action Queue"
+      headers={["Priority", "Issue", "Account", "Impact", "Evidence", "Recommended Action", "Actions"]}
+      rows={[]}
+      emptyText="No current signals in cached snapshot."
       updatedLabel={updatedLabel}
-      onRefresh={onRefresh}
-      onDiscuss={onDiscuss}
-      controls={controls}
+      onRefresh={() => onRefreshSource("account")}
+      onDiscuss={() => {
+        if (visibleFindings[0]) onDiscuss(visibleFindings[0]);
+      }}
     >
-      <details className="mt-5 rounded-[22px] border border-white/55 bg-white/36 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
-        <summary className="cursor-pointer list-none text-[11px] font-semibold uppercase tracking-[0.26em] text-slate-500">
-          LLM implication summary
-        </summary>
-        <div className="mt-3 text-sm leading-7 text-slate-700">{analysis}</div>
-      </details>
-      <div className="mt-5 overflow-x-auto rounded-[28px] border border-white/55 bg-white/36 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+      <div className="mt-5 max-h-[32rem] overflow-auto rounded-[18px] border border-white/60 bg-white/46 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
         <table className="min-w-full border-collapse text-sm text-slate-800">
           <thead>
-            <tr className="border-b border-slate-300/35 text-left text-[11px] uppercase tracking-[0.22em] text-slate-500">
-              {["Account", "Resource Type", "Resource", "Severity", "Signal", "Implication / Action"].map((header) => (
-                <th key={header} className="px-4 py-4 font-semibold">
-                  {header}
-                </th>
+            <tr className="sticky top-0 z-10 border-b border-slate-300/35 bg-white/90 text-left text-[11px] uppercase tracking-[0.16em] text-slate-500 backdrop-blur">
+              {["Priority", "Issue", "Account", "Impact", "Evidence", "Recommended Action", "Actions"].map((header) => (
+                <th key={header} className="px-4 py-4 font-semibold">{header}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {tableRows.length > 0 ? (
-              tableRows.map((row, rowIndex) => (
-                <tr key={`idle-${rowIndex}`} className="border-b border-slate-200/45 transition hover:bg-white/18 last:border-b-0">
-                  {row.map((cell, cellIndex) => (
-                    <td key={`idle-${rowIndex}-${cellIndex}`} className="px-4 py-4 align-top text-[14px] leading-6 text-slate-800">
-                      {cell}
-                    </td>
-                  ))}
+            {visibleFindings.length > 0 ? (
+              visibleFindings.map((finding) => (
+                <tr key={finding.id} className="border-b border-slate-200/45 transition hover:bg-sky-50/46 last:border-b-0">
+                  <td className="px-4 py-4 align-top">
+                    <div className="font-semibold text-slate-950">{finding.priorityScore}</div>
+                    <div className="mt-2"><FindingSeverityBadge severity={finding.severity} /></div>
+                  </td>
+                  <td className="px-4 py-4 align-top">
+                    <div className="min-w-[14rem] font-semibold text-slate-950">{finding.title}</div>
+                    <div className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">{finding.source} / {finding.resourceType}</div>
+                  </td>
+                  <td className="px-4 py-4 align-top">
+                    <div className="font-medium text-slate-900">{formatAccountLabel(finding.accountKey)}</div>
+                    <div className="mt-1 text-xs text-slate-500">{finding.region}</div>
+                  </td>
+                  <td className="px-4 py-4 align-top">
+                    <div className="max-w-xs text-slate-700">{finding.impactText}</div>
+                    <div className="mt-2 rounded-full border border-white/65 bg-white/58 px-2.5 py-1 text-xs font-semibold capitalize text-slate-600">
+                      {finding.impactType}
+                    </div>
+                  </td>
+                  <td className="px-4 py-4 align-top">
+                    <div className="max-w-sm text-xs leading-5 text-slate-600">{finding.evidence.slice(0, 3).join(" | ") || "-"}</div>
+                  </td>
+                  <td className="px-4 py-4 align-top">
+                    <div className="max-w-sm font-medium leading-6 text-slate-800">{finding.recommendedAction}</div>
+                  </td>
+                  <td className="px-4 py-4 align-top">
+                    <div className="flex min-w-[12rem] flex-wrap gap-2">
+                      <button type="button" onClick={() => onDiscuss(finding)} className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-100">
+                        Discuss
+                      </button>
+                      <button type="button" onClick={() => onDetails(finding)} className="rounded-full border border-white/70 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white">
+                        View details
+                      </button>
+                      <button type="button" onClick={() => onPlan(finding)} className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">
+                        Action plan
+                      </button>
+                      <button type="button" onClick={() => onRefreshSource(finding.source)} className="rounded-full border border-white/70 bg-white/70 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white">
+                        Refresh source
+                      </button>
+                      <button type="button" onClick={() => onIgnore(finding.id)} className="rounded-full border border-white/70 bg-white/50 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-white">
+                        Ignore
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={6} className="px-4 py-7 text-slate-500">
-                  No idle resources are available in the current AWS snapshot.
-                </td>
+                <td colSpan={7} className="px-4 py-7 text-slate-500">No current signals in cached snapshot.</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
     </DataCard>
+  );
+}
+
+function CertificateExpiryWatchCard({
+  items,
+  accounts,
+  updatedLabel,
+  onRefresh,
+  onDiscuss,
+  onDetails,
+}: {
+  items: Array<AnalyticsCertificateItem & { account_key: string }>;
+  accounts: AnalyticsHubAccountSnapshot[];
+  updatedLabel: string;
+  onRefresh: () => void;
+  onDiscuss: (finding: NormalizedFinding) => void;
+  onDetails: (finding: NormalizedFinding) => void;
+}) {
+  const findings = buildNormalizedFindings({
+    certificates: items,
+    utilizationRows: [],
+    idleRows: [],
+    spendItems: [],
+    accounts,
+  });
+  return (
+    <DataCard
+      title="Certificate Expiry Watch"
+      headers={["Risk", "Domain/name", "Account", "Region", "Expires in", "Status", "Used by", "Renewal type", "Recommended action", "Discuss"]}
+      rows={[]}
+      emptyText="No ACM certificates expiring within the current snapshot window were found."
+      updatedLabel={updatedLabel}
+      onRefresh={onRefresh}
+      onDiscuss={() => {
+        if (findings[0]) onDiscuss(findings[0]);
+      }}
+    >
+      <div className="mt-5 max-h-[30rem] overflow-auto rounded-[18px] border border-white/60 bg-white/46 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+        <table className="min-w-full border-collapse text-sm text-slate-800">
+          <thead>
+            <tr className="sticky top-0 z-10 border-b border-slate-300/35 bg-white/90 text-left text-[11px] uppercase tracking-[0.16em] text-slate-500 backdrop-blur">
+              {["Risk", "Domain/name", "Account", "Region", "Expires in", "Status", "Used by", "Renewal type", "Recommended action", "Discuss"].map((header) => (
+                <th key={header} className="px-4 py-4 font-semibold">{header}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.length > 0 ? (
+              items.map((item) => {
+                const rawRecord = item as AnalyticsCertificateItem & { in_use_by?: string[]; renewal_eligibility?: string; type?: string; status?: string };
+                const finding = findings.find((candidate) => candidate.resourceId === item.certificate_arn) ?? findings[0];
+                return (
+                  <tr key={item.certificate_arn} className="border-b border-slate-200/45 transition hover:bg-sky-50/46 last:border-b-0">
+                    <td className="px-4 py-4 align-top"><FindingSeverityBadge severity={certificateRiskSeverity(item.days_to_expiry)} /></td>
+                    <td className="px-4 py-4 align-top">
+                      <button type="button" onClick={() => finding && onDetails(finding)} className="min-w-[13rem] text-left font-semibold text-slate-950 transition hover:text-sky-800">
+                        {item.domain_name}
+                      </button>
+                      <div className="mt-1 max-w-xs truncate text-xs text-slate-500">{item.certificate_arn}</div>
+                    </td>
+                    <td className="px-4 py-4 align-top">{formatAccountLabel(item.account_key)}</td>
+                    <td className="px-4 py-4 align-top">{finding?.region ?? "-"}</td>
+                    <td className="px-4 py-4 align-top">
+                      <div className="font-semibold text-slate-950">{item.days_to_expiry} day{item.days_to_expiry === 1 ? "" : "s"}</div>
+                      <div className="mt-1 text-xs text-slate-500">{item.expiry_date}</div>
+                    </td>
+                    <td className="px-4 py-4 align-top">{rawRecord.status ?? certificateRiskLabel(item.days_to_expiry)}</td>
+                    <td className="px-4 py-4 align-top">{rawRecord.in_use_by?.join(", ") || "Not available"}</td>
+                    <td className="px-4 py-4 align-top">{rawRecord.renewal_eligibility ?? rawRecord.type ?? "Not available"}</td>
+                    <td className="px-4 py-4 align-top">
+                      <div className="max-w-sm font-medium leading-6 text-slate-800">
+                        {finding?.recommendedAction ?? "Confirm renewal owner and validation status."}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 align-top">
+                      <button type="button" onClick={() => finding && onDiscuss(finding)} className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-100">
+                        Discuss
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={10} className="px-4 py-7 text-slate-500">No ACM certificates expiring within the current snapshot window were found.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </DataCard>
+  );
+}
+
+function FindingDetailModal({
+  finding,
+  onClose,
+  onDiscuss,
+}: {
+  finding: NormalizedFinding;
+  onClose: () => void;
+  onDiscuss: (finding: NormalizedFinding) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[72] flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-sm" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[28px] border border-white/70 bg-[linear-gradient(180deg,rgba(247,251,255,0.98),rgba(223,237,255,0.96))] p-5 text-slate-900 shadow-[0_30px_90px_rgba(15,23,42,0.28)]" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 border-b border-white/60 pb-4">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-slate-500">{finding.source} finding</div>
+            <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">{finding.title}</h2>
+          </div>
+          <button type="button" onClick={onClose} className={glassButtonClass} aria-label="Close finding details" title="Close">
+            <CloseIcon />
+          </button>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <SummaryMetric label="Severity" value={finding.severity} helper={`Priority ${finding.priorityScore}`} tone={finding.severity === "critical" || finding.severity === "high" ? "rose" : finding.severity === "medium" ? "amber" : "slate"} />
+          <SummaryMetric label="Account" value={formatAccountLabel(finding.accountKey)} helper={finding.region} tone="sky" />
+          <SummaryMetric label="Impact" value={finding.impactType} helper={finding.resourceType} tone="emerald" />
+        </div>
+        <div className="mt-5 rounded-[18px] border border-white/65 bg-white/58 p-4 text-sm leading-6 text-slate-700">
+          <div className="font-semibold text-slate-950">Impact</div>
+          <div className="mt-2">{finding.impactText}</div>
+          <div className="mt-4 font-semibold text-slate-950">Evidence</div>
+          <ul className="mt-2 grid gap-2">
+            {finding.evidence.map((item) => <li key={item} className="rounded-xl bg-white/68 px-3 py-2">{item}</li>)}
+          </ul>
+          <div className="mt-4 font-semibold text-slate-950">Recommended action</div>
+          <div className="mt-2 rounded-xl border border-sky-100 bg-sky-50/82 px-3 py-2 text-sky-950">{finding.recommendedAction}</div>
+        </div>
+        <pre className="mt-5 max-h-72 overflow-auto rounded-[18px] border border-white/65 bg-slate-950/90 p-4 text-xs leading-5 text-slate-100">
+          {JSON.stringify(finding.raw, null, 2)}
+        </pre>
+        <div className="mt-5 flex justify-end gap-3">
+          <button type="button" onClick={onClose} className="rounded-full border border-white/65 bg-white/58 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-white">
+            Close
+          </button>
+          <button type="button" onClick={() => onDiscuss(finding)} className="rounded-full border border-sky-300/60 bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_14px_28px_rgba(2,132,199,0.18)] transition hover:bg-sky-700">
+            Discuss
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TroubleshootingEntrySection({
+  onOpen,
+}: {
+  onOpen: () => void;
+}) {
+  return (
+    <section className={classNames(glassPanelClass, "mt-6 p-5 text-slate-900 sm:p-6 content-visibility-auto")}>
+      <div className="absolute inset-x-6 top-0 h-px bg-white/70" aria-hidden="true" />
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">Unified Troubleshooting</div>
+          <div className="mt-2 text-lg font-semibold tracking-tight text-slate-950">Have logs, traces, or RCA notes?</div>
+          <div className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+            Paste issue context or upload a log file, then start a troubleshooting chat grounded in the supplied evidence.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="w-fit rounded-full border border-sky-300/60 bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(2,132,199,0.2)] transition hover:bg-sky-700"
+        >
+          Start troubleshooting chat
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -2142,6 +3379,24 @@ const EMPTY_SNAPSHOT: AnalyticsHubSnapshot = {
   errors: [],
 };
 
+function snapshotSignature(snapshot: AnalyticsHubSnapshot) {
+  return [
+    snapshot.generated_at_utc ?? "",
+    snapshot.account_count,
+    snapshot.accounts.map((account) => [
+      account.account_key,
+      account.total_cost_30d,
+      account.service_spend_30d.length,
+      account.monthly_cost_trend.length,
+      account.expiring_certificates.length,
+      account.ecs_clusters.length,
+      account.utilization_resources.length,
+      account.idle_resources.length,
+    ].join(":")).join("|"),
+    snapshot.errors.length,
+  ].join("::");
+}
+
 export default function AnalyticsHub({
   actionButton,
   paneActions,
@@ -2149,7 +3404,6 @@ export default function AnalyticsHub({
   actionButton: ReactNode;
   paneActions: ReactNode;
 }) {
-  const chats = useChatStore((s) => s.chats);
   const availableAccountKeys = useChatStore((s) => s.availableAccountKeys);
   const selectedAccountKeys = useChatStore((s) => s.selectedAccountKeys);
   const toggleAccountSelection = useChatStore((s) => s.toggleAccountSelection);
@@ -2159,6 +3413,7 @@ export default function AnalyticsHub({
   const openDiscussionTable = useUiStore((s) => s.openDiscussionTable);
   const closeDiscussionTable = useUiStore((s) => s.closeDiscussionTable);
   const [snapshot, setSnapshot] = useState<AnalyticsHubSnapshot>(EMPTY_SNAPSHOT);
+  const [storageStatus, setStorageStatus] = useState<AnalyticsHubStorageStatus | null>(null);
   const [refreshInProgress, setRefreshInProgress] = useState(false);
   const [refreshingTableKey, setRefreshingTableKey] = useState<string | null>(null);
   const [accountsOpen, setAccountsOpen] = useState(false);
@@ -2175,27 +3430,42 @@ export default function AnalyticsHub({
   const [utilizationAnalysis, setUtilizationAnalysis] = useState("");
   const [utilizationAnalyzing, setUtilizationAnalyzing] = useState(false);
   const [utilizationModalOpen, setUtilizationModalOpen] = useState(false);
+  const [workflowModalKind, setWorkflowModalKind] = useState<WorkflowModalKind | null>(null);
+  const [findingDetail, setFindingDetail] = useState<NormalizedFinding | null>(null);
+  const [ignoredFindingIds, setIgnoredFindingIds] = useState<Set<string>>(() => new Set());
+  const [resourceDoctorFilter, setResourceDoctorFilter] = useState<ResourceDoctorFilter>("all");
   const [trackedUtilizationKeys, setTrackedUtilizationKeys] = useState<string[]>(() => loadTrackedUtilizationKeys());
-  const [idleAnalysis, setIdleAnalysis] = useState("");
-  const [idleAnalyzing, setIdleAnalyzing] = useState(false);
   const [guideDockOpen, setGuideDockOpen] = useState(false);
   const [guideTourOpen, setGuideTourOpen] = useState(false);
   const [guideStepIndex, setGuideStepIndex] = useState(0);
-  const idleResourcesSectionRef = useRef<HTMLElement | null>(null);
+  const resourceDoctorSectionRef = useRef<HTMLElement | null>(null);
   const utilizationSectionRef = useRef<HTMLElement | null>(null);
-  const proactiveSectionRef = useRef<HTMLElement | null>(null);
-  const actionPlanSectionRef = useRef<HTMLElement | null>(null);
-  const prioritySectionRef = useRef<HTMLElement | null>(null);
   const certificatesSectionRef = useRef<HTMLElement | null>(null);
+  const priorityQueueSectionRef = useRef<HTMLElement | null>(null);
+  const financialSectionRef = useRef<HTMLElement | null>(null);
+  const ecsSectionRef = useRef<HTMLElement | null>(null);
 
   async function loadSnapshot() {
-    const result = await chatApi.getAnalyticsHubSnapshot();
+    const [result, storageResult] = await Promise.all([
+      chatApi.getAnalyticsHubSnapshot(),
+      chatApi.getAnalyticsHubStorageStatus(),
+    ]);
+    if (storageResult.ok) {
+      setStorageStatus(storageResult.data);
+    }
     if (!result.ok) {
       setRefreshInProgress(false);
       return;
     }
-    setSnapshot(result.data.snapshot);
-    setRefreshInProgress(Boolean(result.data.refresh_in_progress));
+    setSnapshot((current) =>
+      snapshotSignature(current) === snapshotSignature(result.data.snapshot)
+        ? current
+        : result.data.snapshot,
+    );
+    setRefreshInProgress((current) => {
+      const nextValue = Boolean(result.data.refresh_in_progress);
+      return current === nextValue ? current : nextValue;
+    });
   }
 
   async function queueRefresh(tableKey = "all") {
@@ -2207,10 +3477,15 @@ export default function AnalyticsHub({
       setRefreshingTableKey(null);
       return;
     }
+    if (!result.data.queued && !result.data.refresh_in_progress) {
+      setRefreshInProgress(false);
+      setRefreshingTableKey(null);
+      void loadSnapshot();
+      return;
+    }
     window.setTimeout(() => {
       void loadSnapshot();
-      setRefreshingTableKey(null);
-    }, 1200);
+    }, 700);
   }
 
   useEffect(() => {
@@ -2224,8 +3499,16 @@ export default function AnalyticsHub({
     if (!refreshInProgress) return;
     const timerId = window.setTimeout(() => {
       void loadSnapshot();
-    }, 4000);
+      if (!refreshInProgress) {
+        setRefreshingTableKey(null);
+      }
+    }, 2500);
     return () => window.clearTimeout(timerId);
+  }, [refreshInProgress]);
+
+  useEffect(() => {
+    if (refreshInProgress) return;
+    setRefreshingTableKey(null);
   }, [refreshInProgress]);
 
   const filteredAccounts = useMemo(() => {
@@ -2272,28 +3555,6 @@ export default function AnalyticsHub({
 
   const certificateItems = useMemo(() => flattenCertificates(filteredAccounts), [filteredAccounts]);
 
-  const certificateRows = useMemo(
-    () =>
-      certificateItems.map((item) => [
-        formatAccountLabel(item.account_key),
-        item.domain_name,
-        item.expiry_date,
-        <DaysLeftCell key={`${item.certificate_arn}-days`} days={item.days_to_expiry} />,
-      ]),
-    [certificateItems],
-  );
-
-  const certificateDiscussionRows = useMemo(
-    () =>
-      certificateItems.map((item) => [
-        formatAccountLabel(item.account_key),
-        item.domain_name,
-        item.expiry_date,
-        String(item.days_to_expiry),
-      ]),
-    [certificateItems],
-  );
-
   const hasUrgentCertificate = useMemo(
     () => certificateItems.some((item) => item.days_to_expiry < 30),
     [certificateItems],
@@ -2303,18 +3564,14 @@ export default function AnalyticsHub({
     () => financialFilteredAccounts.reduce((sum, account) => sum + account.total_cost_30d, 0),
     [financialFilteredAccounts],
   );
+  const topFinancialAccount = useMemo(
+    () => [...financialFilteredAccounts].sort((a, b) => b.total_cost_30d - a.total_cost_30d)[0] ?? null,
+    [financialFilteredAccounts],
+  );
   const aggregatedServiceSpend = useMemo(() => aggregateServiceSpend(financialFilteredAccounts), [financialFilteredAccounts]);
   const idleResourceRows = useMemo(() => flattenIdleResources(filteredAccounts), [filteredAccounts]);
-  const idleDiscussionRows = useMemo(
-    () =>
-      idleResourceRows.map((row) => [
-        row.account,
-        row.resourceType,
-        row.resourceId,
-        row.severity,
-        row.signal,
-        `${row.implication} Action: ${row.suggestedAction}`,
-      ]),
+  const possibleIdleSaving = useMemo(
+    () => idleResourceRows.reduce((sum, row) => sum + (row.estimatedMonthlyWaste ?? 0), 0),
     [idleResourceRows],
   );
   const utilizationRows = useMemo(() => flattenUtilizationInsights(filteredAccounts), [filteredAccounts]);
@@ -2340,18 +3597,119 @@ export default function AnalyticsHub({
       ]),
     [utilizationRows],
   );
+  const normalizedFindings = useMemo(
+    () =>
+      buildNormalizedFindings({
+        certificates: certificateItems,
+        utilizationRows,
+        idleRows: idleResourceRows,
+        spendItems: aggregatedServiceSpend,
+        accounts: filteredAccounts,
+      }),
+    [aggregatedServiceSpend, certificateItems, filteredAccounts, idleResourceRows, utilizationRows],
+  );
 
   const updatedLabel = refreshInProgress
     ? `Updated moments ago - Refreshing ${refreshingTableKey ?? "data"}`
     : formatRelativeTime(snapshot.generated_at_utc);
 
+  const dashboardSummary = useMemo(
+    () => {
+      const activeFindings = normalizedFindings.filter((finding) => !ignoredFindingIds.has(finding.id));
+      const criticalIssues = activeFindings.filter((finding) => finding.severity === "critical" || finding.severity === "high").length;
+      const utilizationIssues = activeFindings.filter((finding) => finding.source === "utilization").length;
+      const urgentCertificates = certificateItems.filter((item) => item.days_to_expiry <= 30).length;
+      const potentialSavings =
+        idleResourceRows.reduce((sum, row) => sum + (row.estimatedMonthlyWaste ?? 0), 0) +
+        activeFindings.reduce((sum, finding) => sum + (finding.source === "utilization" ? finding.estimatedMonthlySaving ?? 0 : 0), 0);
+      const healthScore = Math.max(
+        0,
+        Math.min(
+          100,
+          100 -
+            activeFindings.filter((finding) => finding.severity === "critical").length * 18 -
+            activeFindings.filter((finding) => finding.severity === "high").length * 12 -
+            activeFindings.filter((finding) => finding.severity === "medium").length * 6 -
+            activeFindings.filter((finding) => finding.severity === "low").length * 2,
+        ),
+      );
+      return {
+        selectedAccounts: selectedAccountKeys.length,
+        connectedAccounts: availableAccountKeys.length,
+        spend: totalFinancialSpend,
+        healthScore,
+        criticalIssues,
+        potentialSavings,
+        urgentCertificates,
+        utilizationIssues,
+        idleCandidates: idleResourceRows.length,
+      };
+    },
+    [availableAccountKeys.length, certificateItems, idleResourceRows, ignoredFindingIds, normalizedFindings, selectedAccountKeys.length, totalFinancialSpend],
+  );
+
+  const proactiveRecommendationItems = useMemo(
+    () =>
+      buildProactiveRecommendationItems({
+        idleRows: idleResourceRows,
+        utilizationRows,
+        certificates: certificateItems,
+        spendItems: aggregatedServiceSpend,
+      }),
+    [aggregatedServiceSpend, certificateItems, idleResourceRows, utilizationRows],
+  );
+
+  const actionPlanItems = useMemo(
+    () =>
+      buildActionPlanItems({
+        idleRows: idleResourceRows,
+        utilizationRows,
+        certificates: certificateItems,
+      }),
+    [certificateItems, idleResourceRows, utilizationRows],
+  );
+
+  const priorityIssueItems = useMemo(
+    () =>
+      buildPriorityIssueItems({
+        idleRows: idleResourceRows,
+        utilizationRows,
+        certificates: certificateItems,
+      }),
+    [certificateItems, idleResourceRows, utilizationRows],
+  );
+
+  const workflowModalConfig = useMemo(() => {
+    if (workflowModalKind === "proactive") {
+      return {
+        title: "Proactive Recommendations",
+        subtitle: "Optimization opportunities assembled from cached spend, utilization, certificate, and idle-resource signals.",
+        items: proactiveRecommendationItems,
+        refreshKey: "all",
+      };
+    }
+    if (workflowModalKind === "actionPlan") {
+      return {
+        title: "Action Plan Generator",
+        subtitle: "Owner-ready steps derived from the highest-priority current findings.",
+        items: actionPlanItems,
+        refreshKey: "all",
+      };
+    }
+    if (workflowModalKind === "priority") {
+      return {
+        title: "Priority Issue Tracker",
+        subtitle: "Current cached issues ranked by severity and operational risk.",
+        items: priorityIssueItems,
+        refreshKey: "all",
+      };
+    }
+    return null;
+  }, [actionPlanItems, priorityIssueItems, proactiveRecommendationItems, workflowModalKind]);
+
   useEffect(() => {
     setUtilizationAnalysis(utilizationFallbackAnalysis(utilizationRows));
   }, [utilizationRows]);
-
-  useEffect(() => {
-    setIdleAnalysis(idleFallbackAnalysis(idleResourceRows));
-  }, [idleResourceRows]);
 
   useEffect(() => {
     if (utilizationRows.length === 0) return;
@@ -2376,6 +3734,124 @@ export default function AnalyticsHub({
     openSingleView("chat");
   }
 
+  async function openFindingDiscussion(finding: NormalizedFinding) {
+    const rows = findingToDiscussionRows(finding);
+    closeDiscussionTable();
+    await newChat();
+    openDiscussionTable({
+      title: `Analytics Hub Finding: ${finding.title}`,
+      headers: ["Field", "Value"],
+      rows,
+      updatedAtMs: snapshot.generated_at_utc ? new Date(snapshot.generated_at_utc).getTime() : null,
+    });
+    openSingleView("chat");
+    void sendMessage(
+      [
+        "Analyze this Analytics Hub finding. Use only the supplied AWS snapshot evidence for factual state.",
+        "Explain risk, likely impact, immediate mitigation, permanent fix, and AWS data/tools to check next.",
+        "",
+        JSON.stringify(findingToChatContext(finding), null, 2),
+      ].join("\n"),
+    );
+  }
+
+  function refreshFindingSource(source: FindingSource) {
+    const refreshKey = {
+      certificate: "certificates",
+      utilization: "utilization",
+      idle: "idle",
+      financial: "financial",
+      ecs: "accounts",
+      account: "accounts",
+    }[source];
+    void queueRefresh(refreshKey);
+  }
+
+  function openActionPlanForFinding(finding: NormalizedFinding) {
+    setWorkflowModalKind(null);
+    void openTableDiscussion(
+      `Action Plan: ${finding.title}`,
+      ["Step", "Action"],
+      [
+        ["1", `Confirm scope: ${finding.accountKey} / ${finding.region} / ${finding.resourceType} / ${finding.resourceId}`],
+        ["2", `Validate evidence: ${finding.evidence.join(" | ") || "No additional evidence in cache"}`],
+        ["3", finding.recommendedAction],
+        ["4", "After remediation, refresh the source table and verify the finding is cleared."],
+      ],
+    );
+  }
+
+  function findUtilizationFinding(row: UtilizationInsightRow) {
+    return normalizedFindings.find((finding) => finding.source === "utilization" && finding.resourceId === (row.resourceId || row.service));
+  }
+
+  function discussFinancialContext(mode: "drivers" | "waste" | "highest") {
+    const title = {
+      drivers: "Why is my AWS bill high?",
+      waste: "Find AWS waste",
+      highest: "Highest-cost AWS services",
+    }[mode];
+    const rows = [
+      ["source", "analytics_hub"],
+      ["context_type", "financial"],
+      ["selected_accounts", (financialAccountKeys.length ? financialAccountKeys : selectedAccountKeys).join(", ")],
+      ["total_30d_spend", formatCurrency(totalFinancialSpend)],
+      ["top_account", topFinancialAccount ? `${formatAccountLabel(topFinancialAccount.account_key)} ${formatCurrency(topFinancialAccount.total_cost_30d)}` : "None"],
+      ["possible_idle_saving", formatCurrency(possibleIdleSaving)],
+      ["services", JSON.stringify(aggregatedServiceSpend.slice(0, 12), null, 2)],
+      ["idle_candidates", JSON.stringify(idleResourceRows.slice(0, 12), null, 2)],
+    ];
+    void openTableDiscussion(title, ["Field", "Value"], rows);
+  }
+
+  function discussEcsContext(mode: "context" | "issues" | "structure") {
+    const clusters = filteredAccounts.flatMap((account) =>
+      (account.ecs_clusters ?? []).map((cluster) => ({
+        account_key: account.account_key,
+        account_id: account.account_id,
+        region: account.region,
+        cluster,
+      })),
+    );
+    const title = {
+      context: "ECS Context",
+      issues: "ECS Service Issues",
+      structure: "Explain ECS Structure",
+    }[mode];
+    void openTableDiscussion(
+      title,
+      ["Field", "Value"],
+      [
+        ["source", "analytics_hub"],
+        ["context_type", "ecs"],
+        ["mode", mode],
+        ["cluster_count", String(clusters.length)],
+        ["utilization_linked_issues", String(normalizedFindings.filter((finding) => finding.source === "utilization" && finding.resourceType.toLowerCase().includes("ecs")).length)],
+        ["ecs_snapshot", JSON.stringify(clusters, null, 2)],
+      ],
+    );
+  }
+
+  function workflowItemsToRows(items: WorkflowModalItem[]) {
+    return items.map((item) => [
+      item.category,
+      item.title,
+      item.severity,
+      item.reason,
+      item.action,
+    ]);
+  }
+
+  function discussWorkflowModal() {
+    if (!workflowModalConfig) return;
+    void openTableDiscussion(
+      workflowModalConfig.title,
+      ["Category", "Signal", "Severity", "Reason", "Recommended Action"],
+      workflowItemsToRows(workflowModalConfig.items),
+    );
+    setWorkflowModalKind(null);
+  }
+
   function scrollToCertificates() {
     certificatesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -2391,11 +3867,13 @@ export default function AnalyticsHub({
 
   function openAccountsFromGuide() {
     setGuideTourOpen(false);
+    setGuideDockOpen(false);
     setAccountsOpen(true);
   }
 
   function openUtilizationFromGuide() {
     setGuideTourOpen(false);
+    setGuideDockOpen(false);
     setUtilizationModalOpen(true);
     if (!utilizationAnalysis || utilizationAnalysis === utilizationFallbackAnalysis(utilizationRows)) {
       void analyzeUtilization();
@@ -2404,12 +3882,26 @@ export default function AnalyticsHub({
 
   function openPriorityFromGuide() {
     setGuideTourOpen(false);
-    scrollToSection(prioritySectionRef);
+    setGuideDockOpen(false);
+    scrollToSection(priorityQueueSectionRef);
   }
 
-  function openActionPlanFromGuide() {
+  function openCertificatesFromGuide() {
     setGuideTourOpen(false);
-    scrollToSection(actionPlanSectionRef);
+    setGuideDockOpen(false);
+    scrollToCertificates();
+  }
+
+  function openFinancialFromGuide() {
+    setGuideTourOpen(false);
+    setGuideDockOpen(false);
+    scrollToSection(financialSectionRef);
+  }
+
+  function openTroubleshootingFromGuide() {
+    setGuideTourOpen(false);
+    setGuideDockOpen(false);
+    setTroubleshootingOpen(true);
   }
 
   function toggleFinancialAccount(accountKey: string) {
@@ -2446,22 +3938,6 @@ export default function AnalyticsHub({
     setUtilizationAnalyzing(false);
   }
 
-  async function analyzeIdleResources() {
-    if (idleAnalyzing || idleResourceRows.length === 0) return;
-    setIdleAnalyzing(true);
-    const fallback = idleFallbackAnalysis(idleResourceRows);
-    const result = await chatApi.answerWithContext({
-      query: [
-        "Analyze these AWS idle and underused resource rows.",
-        "Explain operational and cost implications, name the first resources to review, and suggest practical cleanup actions.",
-        "Use only the supplied context.",
-      ].join(" "),
-      context: buildIdleLlmContext(idleResourceRows),
-    });
-    setIdleAnalysis(result.ok ? result.data.answer : fallback);
-    setIdleAnalyzing(false);
-  }
-
   function closeTroubleshootingModal() {
     if (troubleshootingSubmitting) return;
     setTroubleshootingOpen(false);
@@ -2477,35 +3953,43 @@ export default function AnalyticsHub({
 
     setTroubleshootingSubmitting(true);
     setTroubleshootingError(null);
-    const fileContext = await readTroubleshootingFiles(troubleshootingFiles);
-    const prompt = formatTroubleshootingPrompt(troubleshootingText, fileContext);
-    const chatId = await newChat();
-    if (!chatId) {
+    try {
+      const fileContext = await readTroubleshootingFiles(troubleshootingFiles);
+      const prompt = formatTroubleshootingPrompt(troubleshootingText, fileContext);
+      const chatId = await newChat();
+      if (!chatId) {
+        setTroubleshootingSubmitting(false);
+        setTroubleshootingError("Unable to create a troubleshooting chat. Check that the backend chat API is reachable, then try again.");
+        return;
+      }
+
+      openSingleView("chat");
+      const sent = await sendMessage(prompt);
+      if (!sent) {
+        setTroubleshootingSubmitting(false);
+        setTroubleshootingError("The troubleshooting chat was created, but the first message could not be sent. Open Chat and retry from there.");
+        return;
+      }
+
+      setTroubleshootingOpen(false);
+      setTroubleshootingText("");
+      setTroubleshootingFiles([]);
       setTroubleshootingSubmitting(false);
-      setTroubleshootingError("Unable to start a new chat for troubleshooting.");
+    } catch (error) {
+      setTroubleshootingSubmitting(false);
+      setTroubleshootingError(error instanceof Error ? error.message : "Unable to submit troubleshooting context.");
       return;
     }
-
-    setTroubleshootingOpen(false);
-    setTroubleshootingText("");
-    setTroubleshootingFiles([]);
-    setTroubleshootingSubmitting(false);
-    openSingleView("chat");
-    void sendMessage(prompt);
   }
 
   return (
-    <div className="relative h-full overflow-y-auto bg-[linear-gradient(180deg,#b6d8ff_0%,#8dbef5_34%,#79afea_65%,#8fc4fb_100%)] px-5 pb-12 pt-2 sm:px-8">
+    <div className="relative h-full overflow-y-auto bg-[#d8e8fb] px-4 pb-12 pt-2 text-slate-900 sm:px-7">
       <div
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_10%_10%,rgba(255,255,255,0.72),transparent_18%),radial-gradient(circle_at_22%_18%,rgba(191,219,254,0.48),transparent_22%),radial-gradient(circle_at_82%_14%,rgba(125,211,252,0.32),transparent_18%),radial-gradient(circle_at_74%_60%,rgba(255,255,255,0.2),transparent_22%),linear-gradient(180deg,#b6d8ff_0%,#8dbef5_34%,#79afea_65%,#8fc4fb_100%)]"
+        className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,#eaf4ff_0%,#d4e7fb_42%,#c8def3_100%)]"
         aria-hidden="true"
       />
       <div
-        className="pointer-events-none absolute inset-0 bg-[linear-gradient(130deg,rgba(255,255,255,0.3),transparent_24%,rgba(255,255,255,0.12)_48%,transparent_72%,rgba(255,255,255,0.28))]"
-        aria-hidden="true"
-      />
-      <div
-        className="pointer-events-none absolute inset-x-[12%] top-[-18%] h-[32rem] rounded-full bg-white/28 blur-[120px]"
+        className="pointer-events-none absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(15,23,42,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,0.08)_1px,transparent_1px)] [background-size:36px_36px]"
         aria-hidden="true"
       />
 
@@ -2526,8 +4010,34 @@ export default function AnalyticsHub({
               utilizationDiscussionRows,
             )
           }
+          onDiscussRow={(row) => {
+            const finding = findUtilizationFinding(row);
+            if (finding) void openFindingDiscussion(finding);
+          }}
           onToggleTracked={toggleTrackedUtilizationResource}
           onClose={() => setUtilizationModalOpen(false)}
+        />
+      ) : null}
+
+      {workflowModalConfig ? (
+        <WorkflowModal
+          title={workflowModalConfig.title}
+          subtitle={workflowModalConfig.subtitle}
+          items={workflowModalConfig.items}
+          onClose={() => setWorkflowModalKind(null)}
+          onDiscuss={discussWorkflowModal}
+          onRefresh={() => void queueRefresh(workflowModalConfig.refreshKey)}
+        />
+      ) : null}
+
+      {findingDetail ? (
+        <FindingDetailModal
+          finding={findingDetail}
+          onClose={() => setFindingDetail(null)}
+          onDiscuss={(finding) => {
+            setFindingDetail(null);
+            void openFindingDiscussion(finding);
+          }}
         />
       ) : null}
 
@@ -2539,29 +4049,64 @@ export default function AnalyticsHub({
       </header>
 
       <div className="relative mx-auto mt-2 flex min-h-full w-full max-w-7xl flex-col">
-        <section className="rounded-[30px] border border-white/45 bg-[linear-gradient(180deg,rgba(255,255,255,0.42),rgba(214,230,255,0.18))] p-5 text-slate-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:p-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="inline-flex w-fit items-center gap-3 rounded-full border border-white/60 bg-white/52 px-4 py-2 text-[11px] uppercase tracking-[0.34em] text-slate-600">
-              <span className="h-2.5 w-2.5 rounded-full bg-sky-400 shadow-[0_0_14px_rgba(56,189,248,0.55)]" />
-              Analytics Hub
+        <section className="rounded-[24px] border border-white/65 bg-white/54 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.86),0_22px_70px_rgba(15,23,42,0.12)] backdrop-blur-[20px] sm:p-5">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem] xl:items-start">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-600">
+                  <StatusPulseIcon active={refreshInProgress} />
+                  Analytics Hub
+                </div>
+                <RefreshStatusStrip
+                  refreshInProgress={refreshInProgress}
+                  refreshingTableKey={refreshingTableKey}
+                  updatedLabel={updatedLabel}
+                  accountCount={dashboardSummary.connectedAccounts}
+                  selectedAccountCount={dashboardSummary.selectedAccounts}
+                  storageStatus={storageStatus}
+                />
+              </div>
+
             </div>
-            <button
-              type="button"
-              onClick={() => setAccountsOpen((open) => !open)}
-              className="inline-flex w-fit items-center justify-center gap-2 rounded-full border border-white/65 bg-white/82 px-5 py-2.5 text-sm font-semibold text-slate-900 shadow-[0_14px_28px_rgba(148,163,184,0.18)] transition hover:bg-white sm:ml-auto"
-              aria-expanded={accountsOpen}
-            >
-              <span>Accounts</span>
-              <span className={classNames("text-slate-500 transition", accountsOpen ? "rotate-180" : "")}>v</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => openGuideTour(0)}
-              className="inline-flex w-fit items-center justify-center gap-2 rounded-full border border-white/65 bg-slate-950/82 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_14px_28px_rgba(15,23,42,0.16)] transition hover:bg-slate-900"
-            >
-              <GuideIcon />
-              <span>Tour</span>
-            </button>
+
+            <div className="grid gap-3">
+              <div className="rounded-[16px] border border-white/70 bg-white/58 p-3 shadow-[0_12px_28px_rgba(148,163,184,0.12)]">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Vendor</span>
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                    AWS active
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {cloudVendors.map((vendor) => (
+                    <button
+                      key={vendor.key}
+                      type="button"
+                      disabled={!vendor.enabled}
+                      aria-pressed={vendor.enabled}
+                      title={vendor.enabled ? "Analytics Hub is currently using AWS data sources." : `${vendor.label} support will be added later.`}
+                      className={classNames(
+                        "min-w-0 rounded-full border px-3 py-2 text-xs font-semibold transition",
+                        vendor.enabled
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-800 shadow-[0_12px_22px_rgba(16,185,129,0.14)]"
+                          : "cursor-not-allowed border-white/55 bg-white/30 text-slate-400",
+                      )}
+                    >
+                      <span className="block truncate">{vendor.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAccountsOpen((open) => !open)}
+                className="inline-flex items-center justify-between gap-3 rounded-[16px] border border-white/70 bg-white/76 px-4 py-3 text-sm font-semibold text-slate-900 shadow-[0_12px_28px_rgba(148,163,184,0.16)] transition hover:bg-white"
+                aria-expanded={accountsOpen}
+              >
+                <span>Manage accounts</span>
+                <span className={classNames("text-slate-500 transition", accountsOpen ? "rotate-180" : "")}>v</span>
+              </button>
+            </div>
           </div>
 
           {accountsOpen ? (
@@ -2640,26 +4185,66 @@ export default function AnalyticsHub({
             </div>
           ) : null}
 
-          <div className="mt-5 max-w-4xl">
-            <p className="text-balance text-2xl font-semibold leading-9 tracking-tight text-slate-950 sm:text-3xl sm:leading-10">
-              Cloud optimization meets operational intelligence.
-              <span className="mt-2 block text-base font-medium leading-7 text-sky-700 sm:text-lg">
-                One command center for cleaner spend, faster triage, and better decisions.
-              </span>
-            </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+            <SummaryMetric
+              label="Cloud Health Score"
+              value={`${dashboardSummary.healthScore}`}
+              helper="100 is clean"
+              tone={dashboardSummary.healthScore >= 85 ? "emerald" : dashboardSummary.healthScore >= 65 ? "amber" : "rose"}
+            />
+            <SummaryMetric
+              label="Critical Issues"
+              value={String(dashboardSummary.criticalIssues)}
+              helper="Critical and high"
+              tone={dashboardSummary.criticalIssues > 0 ? "rose" : "slate"}
+            />
+            <SummaryMetric
+              label="Monthly Spend"
+              value={formatCurrency(dashboardSummary.spend)}
+              helper="30 day selected spend"
+              tone="sky"
+            />
+            <SummaryMetric
+              label="Potential Savings"
+              value={formatCurrency(dashboardSummary.potentialSavings)}
+              helper="Idle and rightsizing"
+              tone={dashboardSummary.potentialSavings > 0 ? "emerald" : "slate"}
+            />
+            <SummaryMetric
+              label="Expiring Certificates"
+              value={String(dashboardSummary.urgentCertificates)}
+              helper="Within 30 days"
+              tone={dashboardSummary.urgentCertificates > 0 ? "rose" : "slate"}
+            />
+            <SummaryMetric
+              label="Utilization Alerts"
+              value={String(dashboardSummary.utilizationIssues)}
+              helper="Underused or overused"
+              tone={dashboardSummary.utilizationIssues > 0 ? "amber" : "slate"}
+            />
           </div>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {featureTabs.slice(0, 4).map((feature) => {
+            {featureTabs.map((feature) => {
               const isCertificateFeature = feature.title === "Certificate Expiry Watch";
               const isUtilizationFeature = feature.title === "Utilization Insights";
-              const isIdleFeature = feature.title === "Detect Idle Resources";
+              const isIdleFeature = feature.title === "Idle Resource Detector";
+              const isFinancialFeature = feature.title === "Financial Impact";
+              const isEcsFeature = feature.title === "ECS Health";
+              const isPriorityFeature = feature.title === "Priority Action Queue";
               const isProactiveFeature = feature.title === "Proactive Recommendations";
+              const isTroubleshootingFeature = feature.title === "Unified Troubleshooting";
               return (
                 <FeatureTab
                   key={feature.title}
                   {...feature}
-                  hasAlert={isUtilizationFeature ? hasOverusedTrackedUtilizationResource : isCertificateFeature && hasUrgentCertificate}
+                  hasAlert={
+                    isPriorityFeature
+                      ? normalizedFindings.some((finding) => finding.severity === "critical" || finding.severity === "high")
+                      : isUtilizationFeature
+                        ? hasOverusedTrackedUtilizationResource
+                        : isCertificateFeature && hasUrgentCertificate
+                  }
                   onClick={
                     isCertificateFeature
                       ? scrollToCertificates
@@ -2671,10 +4256,18 @@ export default function AnalyticsHub({
                             }
                           }
                         : isIdleFeature
-                          ? () => scrollToSection(idleResourcesSectionRef)
-                          : isProactiveFeature
-                            ? () => scrollToSection(proactiveSectionRef)
-                            : undefined
+                          ? () => scrollToSection(resourceDoctorSectionRef)
+                          : isFinancialFeature
+                            ? () => scrollToSection(financialSectionRef)
+                            : isEcsFeature
+                              ? () => scrollToSection(ecsSectionRef)
+                              : isPriorityFeature
+                                ? () => scrollToSection(priorityQueueSectionRef)
+                                : isProactiveFeature
+                                  ? () => setWorkflowModalKind("proactive")
+                          : isTroubleshootingFeature
+                            ? () => setTroubleshootingOpen(true)
+                          : undefined
                   }
                 >
                   {isUtilizationFeature ? <UtilizationTileBars rows={trackedUtilizationRows} /> : null}
@@ -2682,35 +4275,57 @@ export default function AnalyticsHub({
               );
             })}
           </div>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {featureTabs.slice(4).map((feature) => {
-              const isTroubleshootingFeature = feature.title === "Unified Troubleshooting Chat";
-              const isActionPlanFeature = feature.title === "Action Plan Generator";
-              const isPriorityFeature = feature.title === "Priority Issue Tracker";
-              return (
-                <FeatureTab
-                  key={feature.title}
-                  {...feature}
-                  onClick={
-                    isTroubleshootingFeature
-                      ? () => setTroubleshootingOpen(true)
-                      : isActionPlanFeature
-                        ? () => scrollToSection(actionPlanSectionRef)
-                        : isPriorityFeature
-                          ? () => scrollToSection(prioritySectionRef)
-                          : undefined
-                  }
-                />
-              );
-            })}
-          </div>
         </section>
 
-        <section className="mt-6 content-visibility-auto">
+        <OperationsBrief
+          findings={normalizedFindings.filter((finding) => !ignoredFindingIds.has(finding.id))}
+          spendItems={aggregatedServiceSpend}
+          idleRows={idleResourceRows}
+          utilizationRows={utilizationRows}
+          certificates={certificateItems}
+          accounts={filteredAccounts}
+          storageStatus={storageStatus}
+          updatedLabel={updatedLabel}
+          onDiscuss={(finding) => void openFindingDiscussion(finding)}
+        />
+
+        <section ref={priorityQueueSectionRef} className="mt-6 scroll-mt-24 content-visibility-auto">
+          <PriorityActionQueue
+            findings={normalizedFindings}
+            updatedLabel={updatedLabel}
+            ignoredIds={ignoredFindingIds}
+            onDiscuss={(finding) => void openFindingDiscussion(finding)}
+            onDetails={setFindingDetail}
+            onPlan={openActionPlanForFinding}
+            onRefreshSource={refreshFindingSource}
+            onIgnore={(findingId) =>
+              setIgnoredFindingIds((current) => {
+                const next = new Set(current);
+                next.add(findingId);
+                return next;
+              })
+            }
+          />
+        </section>
+
+        <section ref={resourceDoctorSectionRef} className="scroll-mt-24">
+          <ResourceDoctor
+            findings={normalizedFindings.filter((finding) => !ignoredFindingIds.has(finding.id))}
+            filter={resourceDoctorFilter}
+            onFilterChange={setResourceDoctorFilter}
+            onDiscuss={(finding) => void openFindingDiscussion(finding)}
+            onPlan={openActionPlanForFinding}
+            onRefreshSource={refreshFindingSource}
+          />
+        </section>
+
+        <section ref={financialSectionRef} className="mt-6 scroll-mt-24 content-visibility-auto">
           <FinancialImpactCard
             rows={financialServiceSpendRows}
             items={aggregatedServiceSpend}
             total={totalFinancialSpend}
+            topAccountLabel={topFinancialAccount ? formatAccountLabel(topFinancialAccount.account_key) : "None"}
+            possibleSaving={possibleIdleSaving}
             accountKeys={availableAccountKeys}
             selectedAccountKeys={financialAccountKeys.length ? financialAccountKeys : selectedAccountKeys}
             updatedLabel={updatedLabel}
@@ -2725,6 +4340,9 @@ export default function AnalyticsHub({
                 financialServiceSpendRows,
               )
             }
+            onExplainSpend={() => discussFinancialContext("drivers")}
+            onFindWaste={() => discussFinancialContext("waste")}
+            onShowHighestCost={() => discussFinancialContext("highest")}
           />
         </section>
 
@@ -2743,82 +4361,14 @@ export default function AnalyticsHub({
                 utilizationDiscussionRows,
               )
             }
+            onDiscussRow={(row) => {
+              const finding = findUtilizationFinding(row);
+              if (finding) void openFindingDiscussion(finding);
+            }}
           />
         </section>
 
-        <section ref={idleResourcesSectionRef} className="mt-6 scroll-mt-24 content-visibility-auto">
-          <IdleResourcesCard
-            rows={idleResourceRows}
-            analysis={idleAnalysis}
-            isAnalyzing={idleAnalyzing}
-            updatedLabel={updatedLabel}
-            onAnalyze={() => void analyzeIdleResources()}
-            onRefresh={() => void queueRefresh("idle")}
-            onDiscuss={() =>
-              void openTableDiscussion(
-                "Detect Idle Resources",
-                ["Account", "Resource Type", "Resource", "Severity", "Signal", "Implication / Action"],
-                idleDiscussionRows,
-              )
-            }
-          />
-        </section>
-
-        <section ref={proactiveSectionRef} className="mt-6 scroll-mt-24 content-visibility-auto">
-          <DataCard
-            title="Proactive Recommendations"
-            headers={["Category", "Signal", "Recommendation", "Priority"]}
-            rows={[]}
-            emptyText="No proactive recommendations are available in the current AWS snapshot."
-            updatedLabel={updatedLabel}
-            onRefresh={() => void queueRefresh("utilization")}
-            onDiscuss={() =>
-              void openTableDiscussion(
-                "Proactive Recommendations",
-                ["Category", "Signal", "Recommendation", "Priority"],
-                [],
-              )
-            }
-          />
-        </section>
-
-        <section ref={actionPlanSectionRef} className="mt-6 scroll-mt-24 content-visibility-auto">
-          <DataCard
-            title="Action Plan Generator"
-            headers={["Step", "Action", "Owner", "Next Step", "Target"]}
-            rows={[]}
-            emptyText="No action plan rows are available yet."
-            updatedLabel={updatedLabel}
-            onRefresh={() => void queueRefresh("utilization")}
-            onDiscuss={() =>
-              void openTableDiscussion(
-                "Action Plan Generator",
-                ["Step", "Action", "Owner", "Next Step", "Target"],
-                [],
-              )
-            }
-          />
-        </section>
-
-        <section ref={prioritySectionRef} className="mt-6 scroll-mt-24 content-visibility-auto">
-          <DataCard
-            title="Priority Issue Tracker"
-            headers={["Priority", "Issue", "Impact", "Severity", "Recommended Workflow"]}
-            rows={[]}
-            emptyText="No priority issues are available in the current AWS snapshot."
-            updatedLabel={`${updatedLabel} - ranked by severity and operational impact`}
-            onRefresh={() => void queueRefresh("utilization")}
-            onDiscuss={() =>
-              void openTableDiscussion(
-                "Priority Issue Tracker",
-                ["Priority", "Issue", "Impact", "Severity", "Recommended Workflow"],
-                [],
-              )
-            }
-          />
-        </section>
-
-        <section className="mt-6 grid gap-4 lg:grid-cols-2 content-visibility-auto">
+        <section ref={ecsSectionRef} className="mt-6 grid scroll-mt-24 gap-4 lg:grid-cols-2 content-visibility-auto">
           <DataCard
             title="Account Summary"
             headers={["Account", "Region", "Project Name", "Project Owner", "30d Spend", "Top Service"]}
@@ -2837,44 +4387,29 @@ export default function AnalyticsHub({
           <EcsInsightCard
             accounts={filteredAccounts}
             filter={ecsFilter}
+            utilizationIssues={utilizationRows.filter((row) => row.resourceType.toLowerCase().includes("ecs") && (row.utilizationStatus !== "balanced" || row.severity !== "ok")).length}
             onFilterChange={setEcsFilter}
             onExpand={() => setEcsExpanded(true)}
             onNodeDetail={setEcsNodeDetail}
+            onDiscuss={() => discussEcsContext("context")}
+            onFindIssues={() => discussEcsContext("issues")}
+            onExplain={() => discussEcsContext("structure")}
+            onRefresh={() => void queueRefresh("utilization")}
           />
         </section>
 
-        <section ref={certificatesSectionRef} className="mt-6 grid scroll-mt-24 gap-4 lg:grid-cols-[1.25fr_0.75fr] content-visibility-auto">
-          <DataCard
-            title="ACM Certificates Expiring Soon"
-            headers={["Account", "Domain", "Expiry Date", "Days Left"]}
-            rows={certificateRows}
-            emptyText="No ACM certificates expiring within the current snapshot window were found."
+        <section ref={certificatesSectionRef} className="mt-6 scroll-mt-24 content-visibility-auto">
+          <CertificateExpiryWatchCard
+            items={certificateItems}
+            accounts={filteredAccounts}
             updatedLabel={updatedLabel}
             onRefresh={() => void queueRefresh("certificates")}
-            onDiscuss={() =>
-              void openTableDiscussion(
-                "ACM Certificates Expiring Soon",
-                ["Account", "Domain", "Expiry Date", "Days Left"],
-                certificateDiscussionRows,
-              )
-            }
+            onDiscuss={(finding) => void openFindingDiscussion(finding)}
+            onDetails={setFindingDetail}
           />
-
-          <NoteCard title="Refresh Notes">
-            <p>
-              Chats available: <span className="font-semibold text-slate-900">{chats.length}</span>
-            </p>
-            <p>
-              Selected accounts:{" "}
-              <span className="font-semibold text-slate-900">
-                {selectedAccountKeys.map(formatAccountLabel).join(", ") || "None"}
-              </span>
-            </p>
-            <p>The Analytics Hub uses stored backend data so the page opens immediately with the latest available tables.</p>
-            <p>Analytics Hub is the default entry point, and the background AWS refresh keeps these modules current.</p>
-            <p>Every table can still be sent into a dedicated discussion flow if deeper analysis is needed.</p>
-          </NoteCard>
         </section>
+
+        <TroubleshootingEntrySection onOpen={() => setTroubleshootingOpen(true)} />
 
         {snapshot.errors.length > 0 ? (
           <section className="mt-6 rounded-[30px] border border-rose-200/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.4),rgba(254,226,226,0.24))] p-5 text-slate-900 shadow-[0_18px_50px_rgba(148,163,184,0.12)] backdrop-blur-[22px]">
@@ -2901,6 +4436,9 @@ export default function AnalyticsHub({
         onAccounts={openAccountsFromGuide}
         onUtilization={openUtilizationFromGuide}
         onPriority={openPriorityFromGuide}
+        onCertificates={openCertificatesFromGuide}
+        onFinancial={openFinancialFromGuide}
+        onTroubleshooting={openTroubleshootingFromGuide}
       />
 
       {troubleshootingOpen ? (
@@ -2933,11 +4471,12 @@ export default function AnalyticsHub({
           onAccounts={openAccountsFromGuide}
           onIdle={() => {
             setGuideTourOpen(false);
-            scrollToSection(idleResourcesSectionRef);
+            setGuideDockOpen(false);
+            scrollToSection(resourceDoctorSectionRef);
           }}
           onUtilization={openUtilizationFromGuide}
           onPriority={openPriorityFromGuide}
-          onActionPlan={openActionPlanFromGuide}
+          onTroubleshooting={openTroubleshootingFromGuide}
         />
       ) : null}
 
