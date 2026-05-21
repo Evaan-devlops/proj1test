@@ -103,6 +103,16 @@ async def analytics_hub_snapshot(
     )
 
 
+@router.get(
+    "/analytics-hub/storage-status",
+    summary="Get Analytics Hub local storage diagnostics",
+)
+async def analytics_hub_storage_status(
+    service: AnalyticsHubSnapshotService = Depends(get_analytics_hub_snapshot_service),
+) -> dict:
+    return service.get_storage_status()
+
+
 @router.post(
     "/analytics-hub/refresh",
     response_model=AnalyticsHubRefreshResponse,

@@ -5,6 +5,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.schemas.chat import HealthResponse
+from app.services.analytics_hub_service import get_analytics_hub_snapshot_service
 
 
 configure_logging()
@@ -31,6 +32,11 @@ if cors_allowed_origins:
     )
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+
+@app.on_event("startup")
+async def start_analytics_hub_cache_maintenance() -> None:
+    get_analytics_hub_snapshot_service().start_background_maintenance()
 
 
 @app.get("/health", tags=["Health"])

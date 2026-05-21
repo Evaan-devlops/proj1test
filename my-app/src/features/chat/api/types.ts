@@ -143,6 +143,23 @@ export type AnalyticsIdleResourceItem = {
   console_url?: string | null;
 };
 
+export type AnalyticsUtilizationResourceItem = {
+  resource_type: string;
+  resource_id: string;
+  resource_name?: string | null;
+  region: string;
+  utilization_status: "underused" | "balanced" | "overused" | string;
+  severity: AnalyticsEcsSeverity;
+  finding: string;
+  reason: string;
+  suggested_action: string;
+  source: string;
+  current_configuration: Record<string, unknown>;
+  recommended_configuration?: Record<string, unknown> | null;
+  metrics: Record<string, number>;
+  console_url?: string | null;
+};
+
 export type AnalyticsHubAccountSnapshot = {
   account_key: string;
   account_id: string;
@@ -154,6 +171,7 @@ export type AnalyticsHubAccountSnapshot = {
   monthly_cost_trend: AnalyticsMonthlyCostItem[];
   expiring_certificates: AnalyticsCertificateItem[];
   ecs_clusters: AnalyticsEcsClusterItem[];
+  utilization_resources: AnalyticsUtilizationResourceItem[];
   idle_resources: AnalyticsIdleResourceItem[];
 };
 
@@ -180,6 +198,20 @@ export type AnalyticsHubRefreshResponse = {
   queued: boolean;
   refresh_in_progress: boolean;
   table_key: string;
+};
+
+export type AnalyticsHubStorageStatus = {
+  sqlite_enabled: boolean;
+  db_connected?: boolean;
+  db_file: string;
+  db_exists: boolean;
+  table_counts: Record<string, number>;
+  last_refresh_run?: Record<string, unknown> | null;
+  json_snapshot_exists: boolean;
+  jsonl_table_cache_exists: boolean;
+  active_storage_source: "sqlite" | "jsonl_fallback" | string;
+  portable_mode?: boolean;
+  portable_note?: string;
 };
 
 export type ChatStreamRequest = {

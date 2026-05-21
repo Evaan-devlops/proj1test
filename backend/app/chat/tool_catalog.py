@@ -33,6 +33,62 @@ AWS_TOOL_CATALOG: tuple[AwsToolDefinition, ...] = (
         trigger_phrases=("accounts", "available accounts", "which environments"),
     ),
     AwsToolDefinition(
+        tool_name="analytics_hub_snapshot",
+        endpoint="/api/v1/aws/analytics-hub/snapshot",
+        summary="Returns the latest cached Analytics Hub cockpit snapshot from SQLite or JSONL fallback.",
+        use_when=(
+            "Use when the user asks about Analytics Hub, cockpit summary, priority queue, "
+            "current cached AWS findings, utilization insights from the portal, certificate watch status, "
+            "idle resource dashboard data, ECS dashboard context, or what the hub is currently showing."
+        ),
+        response_shape=(
+            "Returns `snapshot` with connected account snapshots, financial rows, certificate rows, "
+            "utilization findings, idle resources, ECS clusters, and `refresh_in_progress`."
+        ),
+        required_inputs=(),
+        optional_inputs=("account_keys",),
+        cache_value="high",
+        live_call_required=False,
+        trigger_phrases=(
+            "analytics hub",
+            "cockpit",
+            "priority queue",
+            "current findings",
+            "cached snapshot",
+            "dashboard data",
+            "utilization insights",
+            "certificate watch",
+            "resource doctor",
+        ),
+    ),
+    AwsToolDefinition(
+        tool_name="analytics_hub_storage_status",
+        endpoint="/api/v1/aws/analytics-hub/storage-status",
+        summary="Returns local Analytics Hub storage diagnostics for SQLite and JSONL fallback.",
+        use_when=(
+            "Use when the user asks whether the embedded DB is connected, whether SQLite is active, "
+            "whether JSONL fallback is being used, table row counts, portability of the data folder, "
+            "or whether a database server/restart is needed."
+        ),
+        response_shape=(
+            "Returns `sqlite_enabled`, `db_connected`, `db_file`, `db_exists`, table counts, "
+            "`last_refresh_run`, JSON/JSONL cache existence, and `active_storage_source`."
+        ),
+        required_inputs=(),
+        cache_value="medium",
+        live_call_required=False,
+        trigger_phrases=(
+            "storage status",
+            "sqlite",
+            "database connected",
+            "db connected",
+            "jsonl fallback",
+            "data folder",
+            "portable database",
+            "database restart",
+        ),
+    ),
+    AwsToolDefinition(
         tool_name="cost_breakdown",
         endpoint="/api/v1/aws/cost-breakdown",
         summary="Returns total AWS cost and top costly services for each account.",

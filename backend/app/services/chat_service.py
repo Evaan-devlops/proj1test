@@ -30,6 +30,7 @@ from app.schemas.chat import (
     StreamFinalEvent,
     StreamStartEvent,
 )
+from app.services.analytics_hub_service import AnalyticsHubSnapshotService, get_analytics_hub_snapshot_service
 from app.services.archive_service import ApiResponseArchiveService
 from app.services.aws_service import AwsInsightsService
 from app.services.chat_store_service import ChatLastToolContext, ChatStoreService
@@ -93,11 +94,13 @@ class ChatService:
         chat_store: ChatStoreService,
         aws_service: AwsInsightsService,
         llm_service: LlmService,
+        analytics_hub_service: AnalyticsHubSnapshotService | None = None,
         archive_service: ApiResponseArchiveService | None = None,
     ) -> None:
         self.chat_store = chat_store
         self.aws_service = aws_service
         self.llm_service = llm_service
+        self.analytics_hub_service = analytics_hub_service or get_analytics_hub_snapshot_service()
         self.archive_service = archive_service or ApiResponseArchiveService()
         self.tool_catalog = get_aws_tool_catalog()
         self._tool_by_name_map = {tool.tool_name: tool for tool in self.tool_catalog}
@@ -105,6 +108,8 @@ class ChatService:
         self.available_account_keys = tuple(settings.get_aws_accounts().keys())
         self._tool_executor_map = {
             "accounts": self._execute_accounts_tool,
+            "analytics_hub_snapshot": self._execute_analytics_hub_snapshot_tool,
+            "analytics_hub_storage_status": self._execute_analytics_hub_storage_status_tool,
             "cost_breakdown": self._execute_cost_breakdown_tool,
             "total_cost": self._execute_total_cost_tool,
             "service_costs": self._execute_service_costs_tool,
@@ -410,6 +415,10 @@ class ChatService:
         ):
             return RouteDecision(tool=self._tool_by_name("accounts"), reason="matched account listing rule")
 
+        explicit_tool = self._route_from_rules(lowered_query)
+        if explicit_tool is not None:
+            return RouteDecision(tool=explicit_tool, reason="matched deterministic AWS tool rule")
+
         route_score = self.tool_router.select_tool(
             query_text=query_text,
             query_context=query_context,
@@ -475,6 +484,27 @@ class ChatService:
         del query_context
         accounts = self.aws_service.list_accounts()
         return {"accounts": [account.model_dump() for account in accounts]}
+
+    async def _execute_analytics_hub_snapshot_tool(self, query_context: QueryContext) -> dict[str, Any]:
+        snapshot = self.analytics_hub_service.get_snapshot()
+        accounts = snapshot.get("accounts", [])
+        if query_context.account_keys:
+            requested = set(query_context.account_keys)
+            accounts = [
+                account
+                for account in accounts
+                if isinstance(account, dict) and account.get("account_key") in requested
+            ]
+            snapshot = {**snapshot, "accounts": accounts}
+        return {
+            "snapshot": snapshot,
+            "refresh_in_progress": self.analytics_hub_service.is_refresh_in_progress(),
+            "storage": self.analytics_hub_service.get_storage_status(),
+        }
+
+    async def _execute_analytics_hub_storage_status_tool(self, query_context: QueryContext) -> dict[str, Any]:
+        del query_context
+        return self.analytics_hub_service.get_storage_status()
 
     async def _execute_cost_breakdown_tool(self, query_context: QueryContext) -> dict[str, Any]:
         return await self.aws_service.get_cost_breakdown(
@@ -632,6 +662,66 @@ class ChatService:
             return (
                 f"{self._markdown_table(['Account', 'Account ID', 'Region'], rows)}\n\n"
                 f"Configured AWS accounts: {', '.join(item.get('account_key', '-') for item in accounts)}."
+            )
+
+        if tool.tool_name == "analytics_hub_storage_status":
+            table_counts = live_result.get("table_counts", {})
+            rows = [
+                ["SQLite enabled", live_result.get("sqlite_enabled", "-")],
+                ["DB connected", live_result.get("db_connected", "-")],
+                ["Active source", live_result.get("active_storage_source", "-")],
+                ["DB file", live_result.get("db_file", "-")],
+                ["DB exists", live_result.get("db_exists", "-")],
+                ["JSON snapshot exists", live_result.get("json_snapshot_exists", "-")],
+                ["JSONL table cache exists", live_result.get("jsonl_table_cache_exists", "-")],
+            ]
+            count_rows = [[key, value] for key, value in sorted(table_counts.items())]
+            return (
+                "Analytics Hub storage is local and embedded; no external database server is required.\n\n"
+                f"{self._markdown_table(['Check', 'Value'], rows)}\n\n"
+                f"{self._markdown_table(['Table', 'Rows'], count_rows) if count_rows else 'No SQLite table counts were returned.'}"
+            )
+
+        if tool.tool_name == "analytics_hub_snapshot":
+            snapshot = live_result.get("snapshot", {})
+            accounts = snapshot.get("accounts", []) if isinstance(snapshot, dict) else []
+            if not accounts:
+                return "Analytics Hub has no account snapshot rows yet. Connect AWS accounts or refresh Analytics Hub to populate the local cache."
+
+            rows: list[list[Any]] = []
+            certificate_count = 0
+            utilization_count = 0
+            idle_count = 0
+            total_spend = 0.0
+            for account in accounts:
+                if not isinstance(account, dict):
+                    continue
+                certificates = account.get("expiring_certificates") or []
+                utilization = account.get("utilization_resources") or []
+                idle = account.get("idle_resources") or []
+                certificate_count += len(certificates) if isinstance(certificates, list) else 0
+                utilization_count += len(utilization) if isinstance(utilization, list) else 0
+                idle_count += len(idle) if isinstance(idle, list) else 0
+                try:
+                    total_spend += float(account.get("total_cost_30d") or 0)
+                except (TypeError, ValueError):
+                    pass
+                rows.append(
+                    [
+                        account.get("account_key", "-"),
+                        account.get("account_id", "-"),
+                        account.get("region", "-"),
+                        account.get("total_cost_30d", "-"),
+                        len(certificates) if isinstance(certificates, list) else 0,
+                        len(utilization) if isinstance(utilization, list) else 0,
+                        len(idle) if isinstance(idle, list) else 0,
+                    ]
+                )
+            return (
+                f"Analytics Hub is using `{live_result.get('storage', {}).get('active_storage_source', 'local cache')}` as the current data source. "
+                f"Selected snapshot coverage: {len(rows)} account(s), total 30-day spend {total_spend:.2f}, "
+                f"{certificate_count} certificate signal(s), {utilization_count} utilization signal(s), and {idle_count} idle resource signal(s).\n\n"
+                f"{self._markdown_table(['Account', 'Account ID', 'Region', '30d Spend', 'Certificates', 'Utilization', 'Idle'], rows)}"
             )
 
         succeeded_accounts = live_result.get("succeeded_accounts", [])
@@ -1005,6 +1095,52 @@ class ChatService:
             phrase in lowered
             for phrase in ("refresh", "recheck", "latest now", "current now", "run again", "fetch again")
         )
+
+    def _route_from_rules(self, lowered_query: str) -> AwsToolDefinition | None:
+        if any(
+            phrase in lowered_query
+            for phrase in (
+                "storage status",
+                "sqlite",
+                "db connected",
+                "database connected",
+                "jsonl fallback",
+                "database restart",
+                "data folder",
+            )
+        ):
+            return self._tool_by_name("analytics_hub_storage_status")
+        if any(
+            phrase in lowered_query
+            for phrase in (
+                "analytics hub",
+                "cockpit",
+                "priority queue",
+                "current findings",
+                "dashboard data",
+                "resource doctor",
+            )
+        ):
+            return self._tool_by_name("analytics_hub_snapshot")
+        if any(phrase in lowered_query for phrase in ("which account", "available account", "list account", "configured account")):
+            return self._tool_by_name("accounts")
+        if any(phrase in lowered_query for phrase in ("certificate", "acm", "tls", "ssl")):
+            return self._tool_by_name("certificate_expiry")
+        if "ecs" in lowered_query or "cluster" in lowered_query or "task" in lowered_query:
+            return self._tool_by_name("ecs_insights")
+        if any(phrase in lowered_query for phrase in ("idle resources", "unused resources", "waste candidates", "rightsizing")):
+            return self._tool_by_name("idle_resources")
+        if self._extract_resource_id(lowered_query):
+            return self._tool_by_name("resource_cost")
+        if any(phrase in lowered_query for phrase in ("trend", "forecast", "anomaly")):
+            return self._tool_by_name("trends_forecast")
+        if "budget" in lowered_query:
+            return self._tool_by_name("budget")
+        if any(phrase in lowered_query for phrase in ("cost breakdown", "top services", "spend drivers", "highest cost")):
+            return self._tool_by_name("cost_breakdown")
+        if any(phrase in lowered_query for phrase in ("total cost", "overall spend", "total spend")):
+            return self._tool_by_name("total_cost")
+        return None
 
     def _looks_like_follow_up(self, query_text: str) -> bool:
         lowered = query_text.lower().strip()

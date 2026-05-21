@@ -236,6 +236,23 @@ class IdleResourceItem(BaseModel):
     console_url: str | None = None
 
 
+class UtilizationResourceItem(BaseModel):
+    resource_type: str
+    resource_id: str
+    resource_name: str | None = None
+    region: str
+    utilization_status: str
+    severity: str
+    finding: str
+    reason: str
+    suggested_action: str
+    source: str
+    current_configuration: dict[str, object] = Field(default_factory=dict)
+    recommended_configuration: dict[str, object] | None = None
+    metrics: dict[str, float] = Field(default_factory=dict)
+    console_url: str | None = None
+
+
 T = TypeVar("T")
 
 
@@ -476,6 +493,7 @@ class AnalyticsHubAccountSnapshot(BaseModel):
     monthly_cost_trend: list[AnalyticsMonthlyCostItem]
     expiring_certificates: list[AnalyticsCertificateItem]
     ecs_clusters: list[AnalyticsEcsClusterItem] = []
+    utilization_resources: list[UtilizationResourceItem] = []
     idle_resources: list[IdleResourceItem] = []
 
 

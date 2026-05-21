@@ -49,6 +49,16 @@ class Settings:
         "ANALYTICS_HUB_TABLE_CACHE_FILE",
         f"{app_data_dir}/analytics_hub_tables.jsonl",
     )
+    analytics_sqlite_db_file: str = os.getenv(
+        "ANALYTICS_SQLITE_DB_FILE",
+        f"{app_data_dir}/aws_insights.db",
+    )
+    analytics_hub_refresh_interval_minutes: int = int(
+        os.getenv("ANALYTICS_HUB_REFRESH_INTERVAL_MINUTES", "30")
+    )
+    analytics_hub_table_cache_max_records: int = int(
+        os.getenv("ANALYTICS_HUB_TABLE_CACHE_MAX_RECORDS", "200")
+    )
     tool_catalog_index_file: str = os.getenv(
         "TOOL_CATALOG_INDEX_FILE",
         f"{app_data_dir}/tool_catalog_index.jsonl",
